@@ -15,11 +15,11 @@ import sounddevice as sd
 from PySide6.QtCore import (
     QEvent,
     QObject,
+    QLineF,
     QProcess,
     QRectF,
     QSettings,
     QSharedMemory,
-    QSize,
     Qt,
     QUrl,
     Signal,
@@ -34,7 +34,6 @@ from PySide6.QtGui import (
     QIcon,
     QPainter,
     QPainterPath,
-    QPalette,
     QPen,
     QPixmap,
 )
@@ -59,7 +58,6 @@ from PySide6.QtWidgets import (
     QStyle,
     QSystemTrayIcon,
     QTextEdit,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -79,6 +77,7 @@ from potato_stt.media_decode import (
 )
 from potato_stt.onnx_asr_engine import OnnxAsrEngine
 from potato_stt.parakeet_windows_installer import ensure_parakeet_service
+from potato_stt.recording_cues import play_recording_started_cue, play_recording_stopped_cue
 from potato_stt.stt_client import transcribe_wav
 from potato_stt.subtitle_export import cues_to_srt, cues_to_vtt
 from potato_stt.transcript_utils import (
@@ -151,66 +150,83 @@ def _try_start_ffmpeg_winget_install() -> bool:
 
 
 def build_app_icon() -> QIcon:
-    """Raster icon for window + tray (no bundled image assets)."""
+    """Raster icon for window + tray: microphone on a rounded tile (drawn in code, no image files)."""
     icon = QIcon()
+    bg = QColor("#4f46e5")
+    edge = QColor("#312e81")
+    mic = QColor("#f8fafc")
 
     def _render(size: int) -> QPixmap:
         pm = QPixmap(size, size)
         pm.fill(Qt.transparent)
         p = QPainter(pm)
         p.setRenderHint(QPainter.Antialiasing, True)
-        margin = max(1, size // 16)
-        p.setBrush(QColor("#2563eb"))
-        p.setPen(QColor("#1e40af"))
-        p.drawRoundedRect(margin, margin, size - 2 * margin, size - 2 * margin, size // 6, size // 6)
-        p.setPen(QColor("#ffffff"))
-        font = QFont()
-        font.setPixelSize(max(8, int(size * 0.45)))
-        font.setBold(True)
-        p.setFont(font)
-        p.drawText(pm.rect(), int(Qt.AlignCenter), "T")
+        margin = max(1, round(size * 0.0625))
+        inner = float(size - 2 * margin)
+        rr = max(2.0, inner * 0.2)
+        p.setBrush(bg)
+        p.setPen(QPen(edge, max(1.0, size / 32.0)))
+        p.drawRoundedRect(
+            float(margin),
+            float(margin),
+            inner,
+            inner,
+            rr,
+            rr,
+        )
+
+        cx = size * 0.5
+        head_r = inner * (0.19 if size >= 20 else 0.21)
+        head_cy = margin + inner * 0.29
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(mic)
+        p.drawEllipse(QRectF(cx - head_r, head_cy - head_r, 2.0 * head_r, 2.0 * head_r))
+
+        body_w = max(3.0, inner * 0.24)
+        body_h = max(4.0, inner * 0.30)
+        body_top = head_cy + head_r * 0.55
+        p.drawRoundedRect(
+            QRectF(cx - body_w / 2.0, body_top, body_w, body_h),
+            body_w * 0.42,
+            body_w * 0.42,
+        )
+
+        stem_w = max(1.5, inner * 0.08)
+        stem_h = max(2.0, inner * 0.11)
+        stem_top = body_top + body_h
+        p.drawRoundedRect(QRectF(cx - stem_w / 2.0, stem_top, stem_w, stem_h), 1.0, 1.0)
+
+        stem_bottom = stem_top + stem_h
+        arm = inner * 0.19
+        lw = max(1.2, size * 0.085)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        mic_pen = QPen(mic)
+        mic_pen.setWidthF(lw)
+        mic_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        mic_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(mic_pen)
+        p.drawLine(QLineF(cx, stem_bottom, cx - arm, stem_bottom + arm * 0.95))
+        p.drawLine(QLineF(cx, stem_bottom, cx + arm, stem_bottom + arm * 0.95))
+
+        if size >= 48:
+            cy = margin + inner * 0.52
+            wave_col = QColor(248, 250, 252)
+            wave_col.setAlpha(140)
+            wave_pen = QPen(wave_col)
+            wave_pen.setWidthF(max(1.0, size / 48.0))
+            wave_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(wave_pen)
+            wx0 = cx + head_r + inner * 0.06
+            for i, h in enumerate((inner * 0.07, inner * 0.11, inner * 0.08)):
+                x = wx0 + i * inner * 0.065
+                p.drawLine(QLineF(x, cy - h / 2.0, x, cy + h / 2.0))
+
         p.end()
         return pm
 
     for s in (16, 24, 32, 48, 64, 128, 256):
         icon.addPixmap(_render(s))
-    return icon
-
-
-def build_gear_icon(color: QColor, pixel_size: int = 20) -> QIcon:
-    """Vector gear centered in the pixmap (no font metrics / QToolButton baseline quirks)."""
-    pm = QPixmap(pixel_size, pixel_size)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing, True)
-    cx = pixel_size * 0.5
-    cy = pixel_size * 0.5
-    pen = QPen(color)
-    pen.setWidthF(max(1.0, pixel_size / 14.0))
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    p.setPen(pen)
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    teeth = 8
-    r_tip = pixel_size * 0.36
-    r_valley = pixel_size * 0.22
-    path = QPainterPath()
-    for i in range(teeth * 2):
-        a = 2 * math.pi * i / (teeth * 2) - math.pi / 2
-        r = r_tip if i % 2 == 0 else r_valley
-        x = cx + r * math.cos(a)
-        y = cy + r * math.sin(a)
-        if i == 0:
-            path.moveTo(x, y)
-        else:
-            path.lineTo(x, y)
-    path.closeSubpath()
-    p.drawPath(path)
-    hole_r = pixel_size * 0.10
-    p.drawEllipse(QRectF(cx - hole_r, cy - hole_r, 2 * hole_r, 2 * hole_r))
-    p.end()
-    icon = QIcon()
-    icon.addPixmap(pm)
     return icon
 
 
@@ -517,6 +533,65 @@ class AppSignals(QObject):
     translationModelPreloadFinished = Signal(bool, str)
 
 
+class RecordingPulseWidget(QWidget):
+    """Soft pulsing red indicator (timer-driven repaint) for active recording."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(28, 28)
+        self._phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.setInterval(45)
+        self._timer.timeout.connect(self._on_timer_tick)
+
+    def _on_timer_tick(self) -> None:
+        self._phase += 0.055
+        if self._phase >= 1.0:
+            self._phase -= 1.0
+        self.update()
+
+    def showEvent(self, event: QEvent) -> None:
+        super().showEvent(event)
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def hideEvent(self, event: QEvent) -> None:
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def paintEvent(self, event: QEvent) -> None:
+        del event
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        cx = self.width() * 0.5
+        cy = self.height() * 0.5
+        t = self._phase * 2.0 * math.pi
+        pulse = 0.5 + 0.5 * math.sin(t)
+
+        # Soft outer glow (filled, alpha breathes)
+        halo_r = 6.0 + pulse * 6.5
+        halo_alpha = int(35 + pulse * 165)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 55, 55, halo_alpha))
+        p.drawEllipse(QRectF(cx - halo_r, cy - halo_r, 2.0 * halo_r, 2.0 * halo_r))
+
+        # Out-of-phase ring for extra motion
+        ring_pulse = 0.5 + 0.5 * math.sin(t + 1.1)
+        ring_r = 7.5 + ring_pulse * 5.0
+        ring_pen = QPen(QColor(255, 140, 140, int(70 + ring_pulse * 150)))
+        ring_pen.setWidthF(2.0)
+        p.setPen(ring_pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QRectF(cx - ring_r, cy - ring_r, 2.0 * ring_r, 2.0 * ring_r))
+
+        # Solid core
+        core_r = 4.8
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#ff3333"))
+        p.drawEllipse(QRectF(cx - core_r, cy - core_r, 2.0 * core_r, 2.0 * core_r))
+        p.end()
+
+
 class RecordingOverlay(QWidget):
     """Small always-on-top marker; does not take focus or block mouse input."""
 
@@ -549,14 +624,11 @@ class RecordingOverlay(QWidget):
         layout.setContentsMargins(16, 10, 16, 10)
         layout.setSpacing(8)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        dot = QLabel("●")
-        # Bullet glyphs often sit low in the font box vs. Latin text; nudge up for optical alignment.
-        dot.setStyleSheet("color: #ff4444; font-size: 18px; margin-top: -3px;")
-        dot.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter)
+        self._pulse = RecordingPulseWidget(panel)
         label = QLabel("Recording")
         label.setStyleSheet("color: #f0f0f0; font-size: 14px; font-weight: bold;")
         label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        layout.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self._pulse, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(label, 0, Qt.AlignmentFlag.AlignVCenter)
 
         panel.setStyleSheet(
@@ -578,32 +650,26 @@ class MainWindow(QMainWindow):
         self._qsettings = QSettings("PotatoSTT", "PotatoSTT")
         self._ptt_specs: list[str] = load_ptt_specs(self._qsettings)
         self._stt_engine_ready = False
+        # True only for File → Quit / tray Quit so closeEvent exits instead of hiding to tray.
+        self._requesting_full_quit = False
 
         self._status_label = QLabel("Initializing...")
         self._transcript = QTextEdit()
         self._transcript.setReadOnly(True)
         self._transcript.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._help_label = QLabel("")
-        self._help_label.setWordWrap(True)
-
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._progress.setFormat("Starting...")
-
-        self._quit_btn = QPushButton("Quit")
-        self._quit_btn.clicked.connect(self.close)
 
         self._options_win: Optional[OptionsWindow] = None
 
         root = QWidget()
         layout = QVBoxLayout()
-        layout.addWidget(self._help_label)
         layout.addWidget(self._status_label)
         layout.addWidget(self._progress)
         layout.addLayout(QHBoxLayout())
         layout.addWidget(self._transcript)
-        layout.addWidget(self._quit_btn)
         root.setLayout(layout)
         self.setCentralWidget(root)
 
@@ -614,7 +680,7 @@ class MainWindow(QMainWindow):
         _file_menu.addSeparator()
         act_quit_menu = QAction("&Quit", self)
         act_quit_menu.setShortcut("Ctrl+Q")
-        act_quit_menu.triggered.connect(self.close)
+        act_quit_menu.triggered.connect(self._quit_application)
         _file_menu.addAction(act_quit_menu)
 
         _settings_menu = self.menuBar().addMenu("&Settings")
@@ -623,36 +689,15 @@ class MainWindow(QMainWindow):
         act_options_menu.triggered.connect(self._open_options)
         _settings_menu.addAction(act_options_menu)
 
+        _help_menu = self.menuBar().addMenu("&Help")
+        act_using_help = QAction("Using Potato STT…", self)
+        act_using_help.triggered.connect(self._show_using_help_dialog)
+        _help_menu.addAction(act_using_help)
         if sys.platform == "win32":
-            _help_menu = self.menuBar().addMenu("&Help")
+            _help_menu.addSeparator()
             act_clear_data = QAction("Clear local data (uninstall caches)…", self)
             act_clear_data.triggered.connect(self._on_clear_local_data)
             _help_menu.addAction(act_clear_data)
-
-        _toolbar = QToolBar("Main")
-        _toolbar.setMovable(False)
-        _toolbar.setFloatable(False)
-        _toolbar.setIconSize(QSize(22, 22))
-        _toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.addToolBar(_toolbar)
-
-        act_tb_transcribe = QAction("Transcribe file", self)
-        act_tb_transcribe.setToolTip("Open an audio or video file to transcribe")
-        _sty = self.style()
-        if _sty is not None:
-            act_tb_transcribe.setIcon(
-                _sty.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton)
-            )
-        act_tb_transcribe.triggered.connect(self._on_transcribe_file_chosen)
-        _toolbar.addAction(act_tb_transcribe)
-
-        act_tb_options = QAction("Options", self)
-        act_tb_options.setToolTip("Open settings (push-to-talk, startup, …)")
-        act_tb_options.setIcon(
-            build_gear_icon(self.palette().color(QPalette.ColorRole.WindowText), pixel_size=20)
-        )
-        act_tb_options.triggered.connect(self._open_options)
-        _toolbar.addAction(act_tb_options)
 
         self.signals = AppSignals()
         # Queued so slots always run on the GUI thread when workers emit (avoids blocking/freezes).
@@ -704,37 +749,20 @@ class MainWindow(QMainWindow):
                 act_tray_clear.triggered.connect(self._on_clear_local_data)
                 tray_menu.addAction(act_tray_clear)
             act_quit = QAction("Quit", self)
-            act_quit.triggered.connect(self._quit_from_tray)
+            act_quit.triggered.connect(self._quit_application)
             tray_menu.addAction(act_quit)
             tray.setContextMenu(tray_menu)
             tray.activated.connect(self._on_tray_activated)
             tray.show()
             self._tray_icon = tray
 
-        self._update_ptt_help_text()
+        self._sync_tray_ptt_tooltip()
 
         # Start engine ensure in background, then register hotkey.
         threading.Thread(target=self._ensure_engine_and_start_hotkey, daemon=True).start()
 
     def has_system_tray(self) -> bool:
         return self._tray_icon is not None
-
-    def changeEvent(self, event: QEvent) -> None:
-        if (
-            event.type() == QEvent.Type.WindowStateChange
-            and self._tray_icon is not None
-            and self.windowState() & Qt.WindowState.WindowMinimized
-        ):
-            QTimer.singleShot(0, self._hide_to_tray)
-        super().changeEvent(event)
-
-    def _hide_to_tray(self) -> None:
-        if self._tray_icon is None:
-            return
-        if not (self.windowState() & Qt.WindowState.WindowMinimized):
-            return
-        self.setWindowState(Qt.WindowState.WindowNoState)
-        self.hide()
 
     @Slot()
     def _show_from_tray(self) -> None:
@@ -748,9 +776,10 @@ class MainWindow(QMainWindow):
             self._show_from_tray()
 
     @Slot()
-    def _quit_from_tray(self) -> None:
+    def _quit_application(self) -> None:
         # Quit must run after the tray context menu returns on Windows; a synchronous
         # QApplication.quit() from the menu action is often ignored and leaves the process running.
+        self._requesting_full_quit = True
         self._shutdown()
         QTimer.singleShot(0, QApplication.quit)
 
@@ -762,7 +791,7 @@ class MainWindow(QMainWindow):
             self._tray_icon.hide()
         self._stop_hotkey_listeners()
         try:
-            self._stop_recording()
+            self._stop_recording(play_stop_cue=False)
         except Exception:
             pass
         try:
@@ -771,7 +800,15 @@ class MainWindow(QMainWindow):
             pass
 
     def closeEvent(self, event):  # type: ignore[no-untyped-def]
-        self._shutdown()
+        if self._tray_icon is not None and not self._requesting_full_quit:
+            event.ignore()
+            self._recording_overlay.hide()
+            if self._options_win is not None:
+                self._options_win.hide()
+            self.hide()
+            return
+        if not self._requesting_full_quit:
+            self._shutdown()
         super().closeEvent(event)
 
     def _stop_hotkey_listeners(self) -> None:
@@ -784,21 +821,64 @@ class MainWindow(QMainWindow):
                     pass
                 setattr(self, attr, None)
 
-    def _update_ptt_help_text(self) -> None:
+    def _using_help_text(self) -> str:
         ptt = specs_summary_phrase(self._ptt_specs)
-        text = f"Hold {ptt} to record. Release to transcribe."
+        lines = [
+            f"Hold {ptt} to record. Release when you are done; the text is transcribed and pasted into "
+            "the application that had keyboard focus when you pressed the key (and also appears in "
+            "this window).",
+            "",
+            "Use File → Transcribe media file… to transcribe an existing audio or video file.",
+            "Use Settings → Options… (Ctrl+,) to change push-to-talk keys, startup behavior, filters, "
+            "and optional translation.",
+        ]
         if self._tray_icon is not None:
-            text += (
-                " Minimize the window to send it to the system tray "
-                "(double-click the tray icon to restore)."
+            lines.extend(
+                [
+                    "",
+                    "When a system tray icon is available:",
+                    "• The window close button (X) hides this window to the tray without quitting; "
+                    "minimize uses the taskbar as usual.",
+                    "• Double-click the tray icon to show the window again.",
+                    "• Use File → Quit (Ctrl+Q) or the tray menu Quit to exit completely.",
+                ]
             )
+        else:
+            lines.extend(
+                [
+                    "",
+                    "No system tray icon is available on this session; use File → Quit (Ctrl+Q) to exit.",
+                ]
+            )
+        return "\n".join(lines)
+
+    @Slot()
+    def _show_using_help_dialog(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Using Potato STT")
+        dlg.setModal(True)
+        dlg.setMinimumWidth(520)
+        body = QTextEdit()
+        body.setReadOnly(True)
+        body.setPlainText(self._using_help_text())
+        body.setMinimumHeight(280)
+        body.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        bbox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        bbox.accepted.connect(dlg.accept)
+        root = QVBoxLayout(dlg)
+        root.addWidget(body)
+        root.addWidget(bbox)
+        dlg.exec()
+
+    def _sync_tray_ptt_tooltip(self) -> None:
+        ptt = specs_summary_phrase(self._ptt_specs)
+        if self._tray_icon is not None:
             self._tray_icon.setToolTip(f"Potato STT — hold {ptt} to talk")
-        self._help_label.setText(text)
 
     @Slot()
     def _on_ptt_key_setting_changed(self) -> None:
         self._ptt_specs = load_ptt_specs(self._qsettings)
-        self._update_ptt_help_text()
+        self._sync_tray_ptt_tooltip()
         self.restart_ptt_listeners()
 
     def restart_ptt_listeners(self) -> None:
@@ -1507,10 +1587,11 @@ class MainWindow(QMainWindow):
             blocksize=1024,
             callback=callback,
         )
+        play_recording_started_cue()
         self._stream.start()
         self.signals.recordingActive.emit(True)
 
-    def _stop_recording(self) -> None:
+    def _stop_recording(self, *, play_stop_cue: bool = True) -> None:
         if not self._recording:
             return
         self._recording = False
@@ -1527,6 +1608,8 @@ class MainWindow(QMainWindow):
                 stream.close()
             except Exception:
                 pass
+        if play_stop_cue:
+            play_recording_stopped_cue()
 
     def _stop_recording_and_transcribe(self) -> None:
         if not self._recording:

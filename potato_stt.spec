@@ -74,6 +74,14 @@ try:
 except Exception:
     pass
 
+# Recording cues (Kenney Interface Sounds CC0 WAVs; see potato_stt/assets/sounds/).
+datas += [
+    (
+        os.path.join(spec_root, "potato_stt", "assets", "sounds"),
+        os.path.join("potato_stt", "assets", "sounds"),
+    ),
+]
+
 # PotatoSTTCPU.bat is not listed here: PyInstaller places `datas` under _internal/,
 # but the launcher must sit next to PotatoSTT.exe. build_windows_exe.ps1 copies it
 # into dist/PotatoSTT/ after the build.

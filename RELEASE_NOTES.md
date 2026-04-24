@@ -1,5 +1,29 @@
 # Release notes
 
+## Potato STT v1.6 — 2026-04-25
+
+**Subject:** Recording **audio cues** and **animated overlay**, **tray-aware window chrome**, **Help** usage dialog, **mic app icon**, leaner **main window** (no toolbar / no footer Quit), packaging for bundled sounds.
+
+### New behavior
+
+- **Recording cues (Windows):** Short **UI sounds** when push-to-talk **starts** and **stops**, using bundled **CC0** samples from Kenney *Interface Sounds* (`bong_001` for both cues). Playback uses **`winsound`** (`SND_ASYNC`). Cues are skipped when quitting during an active recording. New module **`potato_stt/recording_cues.py`** and folder **`potato_stt/assets/sounds/`** (license + `SOURCES.txt` provenance).
+- **Recording overlay:** Replaced the static red bullet with a **`RecordingPulseWidget`** — a **timer-driven** pulsing halo, ring, and solid core so “recording” is easier to see at a glance.
+- **System tray vs. window controls:** With a tray icon, the title-bar **close (X)** **hides** the main window to the tray (does not quit). **Minimize** uses the **taskbar** normally (no longer auto-sent to tray). **File → Quit** (**Ctrl+Q**) and tray **Quit** perform a full exit (`_quit_application`). **Options** is hidden when sending the main window to the tray from **X**.
+- **Help → Using Potato STT…** (all platforms): Opens a **modal** read-only summary (PTT, paste behavior, File/Settings pointers, tray bullets when applicable). **Help** is always available; **Help → Clear local data…** remains **Windows-only** after a separator. Inline help text was **removed** from the main window.
+- **Main window layout:** Removed the bottom **Quit** button (quit remains in **File** and tray). Removed the **toolbar** (**Transcribe file** / **Options**); use **File** and **Settings** menus (and tray) instead.
+- **App icon:** Programmatic **microphone** tile (multi-resolution `QIcon`) for the window and tray, replacing the blue “T” tile.
+
+### Packaging and tests
+
+- **`potato_stt.spec`:** Adds **`potato_stt/assets/sounds`** to **`datas`** so frozen builds ship cue WAVs.
+- **`tests/test_recording_cues.py`:** Covers frozen vs. dev paths, missing files, and Windows `PlaySound` wiring.
+
+### Docs
+
+- **`README.md`** and **`MANUAL_TEST_CASES.md`** updated for cues, tray/close/minimize, toolbar removal, Help dialog, and manual cases (e.g. TC-59, TC-81).
+
+---
+
 ## Potato STT v1.5 — 2026-04-05 (commit `a26e74a`)
 
 **Subject:** Optional **local Russian → English** translation after push-to-talk (Marian / PyTorch CPU), streamlined **Options-only** enablement, main-window **English** line, packaging and reliability fixes for model download.

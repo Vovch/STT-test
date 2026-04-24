@@ -1,0 +1,7 @@
+Bundled copies of Kenney Interface Sounds (CC0). Original filenames in the pack:
+
+  recording_start.wav  ←  bong_001.wav
+  recording_stop.wav   ←  bong_001.wav
+
+Pack: https://kenney.nl/assets/interface-sounds
+Mirror used for retrieval: https://github.com/Calinou/kenney-interface-sounds

@@ -8,12 +8,13 @@ Core flow:
 - transcribe (default: ONNX ASR / Parakeet TDT)
 - optional **local Russian → English translation** after push-to-talk: enable **Translate push-to-talk transcripts to English** under **Options** (or **Ctrl+,**). A **warning** offers **Agree** or **Refuse** (Refuse is default); **Agree** turns the feature on and starts downloading the **Marian model (~300 MB)** from Hugging Face in the background **if it is not already** in your local Hugging Face cache (internet required). The model is **not** bundled in the EXE. **PyTorch** and **transformers** are included in the **regular Windows EXE build** (`build_windows_exe.ps1`) so users do not install them by hand. The transcript list shows the recognized text and, when translation is on, an **English:** line with the translation when it differs from that recognition; **paste** is English only after the Marian model has downloaded and loaded successfully. When running from source without torch, the app can offer **pip** to install dependencies.
 - paste into the app that had focus when you **pressed** the key (also mirrored in this window)
+- when the **system tray** is available, the window **close** button (**X**) hides the app to the tray; **minimize** leaves a normal taskbar button. Use **File → Quit** (**Ctrl+Q**) or the tray menu **Quit** to exit completely.
 
 **Paste troubleshooting:** If text only appears here, click the target text field first, then use push-to-talk. Windows may block focus steal for elevated (Run as administrator) apps unless Potato STT is also elevated.
 
 ## Transcribe existing audio or video files
 
-Use **File → Transcribe media file…** (or the toolbar / tray) to pick an audio or video file. The app runs the same STT backend as push-to-talk and **appends the transcript in the Potato STT window only** (it does **not** paste into whatever app is focused).
+Use **File → Transcribe media file…** (or the tray menu) to pick an audio or video file. The app runs the same STT backend as push-to-talk and **appends the transcript in the Potato STT window only** (it does **not** paste into whatever app is focused).
 
 **Long files:** Media longer than **`POTATO_STT_TRANSCRIBE_CHUNK_SECONDS`** (default **120** seconds) is transcribed **in time segments** (small temp WAVs per segment). That avoids decoding a multi-hour file into one huge WAV and stops ONNX from loading the whole recording at once, which could **freeze the PC** from RAM pressure. Shorter files still use a single decode as before.
 
@@ -140,7 +141,7 @@ This removes **per-user** data only (not the `PotatoSTT` program folder or Pytho
 - Saved options in the registry (`PotatoSTT` / `PipitClone` Qt keys) and **Run at startup** entries (`PotatoSTT`, `PipitClone`)
 - Leftover `%TEMP%\potato-stt-*` folders
 
-**In the app:** **Help → Clear local data (uninstall caches)…** (Windows) opens the script’s folder or runs it in a new PowerShell window. Quit the app first.
+**In the app:** **Help → Using Potato STT…** opens a short usage summary (push-to-talk, tray, menus). **Help → Clear local data (uninstall caches)…** (Windows) opens the script’s folder or runs it in a new PowerShell window. Quit the app first.
 
 **Command line:** from the repo root, `.\scripts\Clear-PotatoSTTData.ps1` (interactive confirm), or `.\scripts\Clear-PotatoSTTData.ps1 -Yes` / `-WhatIf`. Next to a built `PotatoSTT.exe`, use `.\Clear-PotatoSTTData.ps1`.
 
@@ -151,7 +152,7 @@ Optional **`-AllHuggingfaceHub`** deletes the **entire** Hugging Face hub cache 
 1. Launch Notepad (or any text field in any app).
 2. Start Potato STT (`python -m potato_stt` or `PotatoSTT.exe`).
 3. Click into Notepad so the caret is active.
-4. Hold your push-to-talk key (default **Right Ctrl**), speak, then release.
+4. Hold your push-to-talk key (default **Right Ctrl**), speak, then release. On **Windows**, short **UI sounds** mark the start and end of capture (bundled CC0 samples; see `potato_stt/assets/sounds/`).
 5. Expected:
    - transcript appears in the Potato STT window
    - same transcript is pasted at your active cursor
@@ -167,6 +168,6 @@ The app shows a progress bar:
 
 - If **DirectML runs out of GPU memory** during ONNX load, the app **retries on CPU** automatically and shows a status message. Set `POTATO_STT_CPU_ONLY=1` to skip the GPU path entirely (recommended on low-VRAM systems).
 - `POTATO_STT_CPU_ONLY=1` applies to the **built-in ONNX ASR** backend (`POTATO_STT_BACKEND=onnx_asr`). The separate **HTTP** Parakeet service (`POTATO_STT_BACKEND=http`) runs its own Python process and may still use GPU unless you configure that stack separately.
-- This MVP uses “push-to-talk” (transcribe after you release the key), not true word-level streaming.
+- This MVP uses “push-to-talk” (transcribe after you release the key), not true word-level streaming. **Windows:** start/stop cues play bundled WAV clips via `winsound` (async); they are skipped when quitting during an active recording. Samples are **Kenney** [*Interface Sounds*](https://kenney.nl/assets/interface-sounds) (`bong_001` for both start and stop, CC0 — see `potato_stt/assets/sounds/LICENSE-kenney-interface-sounds.txt`).
 - First startup can be very long in fallback mode because Python dependencies and models are downloaded.
 - If the Parakeet all-in-one package changes its local API contract, you may need to adjust `potato_stt/stt_client.py`.

@@ -59,7 +59,7 @@ Structured checks for **Windows** desktop validation. Record **Pass / Fail / Blo
 
 | ID | Steps | Expected |
 |----|--------|----------|
-| TC-40 | **File → Transcribe media file…** (or toolbar / tray): choose a short **16 kHz mono PCM WAV**. | Transcript **appends** in Potato STT only; **nothing pasted** to previously focused app. |
+| TC-40 | **File → Transcribe media file…** (or tray): choose a short **16 kHz mono PCM WAV**. | Transcript **appends** in Potato STT only; **nothing pasted** to previously focused app. |
 | TC-41 | Choose **MP4** or **MP3** with FFmpeg on PATH. | Decode succeeds; transcript appears; finish message includes **Ready** (progress not stuck). |
 | TC-42 | Same flow **without** FFmpeg: use only WAV. | Non-WAV fails with clear error; WAV still works. |
 | TC-43 | File longer than **`POTATO_STT_TRANSCRIBE_CHUNK_SECONDS`** (default 120 s). | Chunked progress; completion without freezing OS; full transcript appended. |
@@ -81,7 +81,8 @@ Structured checks for **Windows** desktop validation. Record **Pass / Fail / Blo
 
 | ID | Steps | Expected |
 |----|--------|----------|
-| TC-60 | Use **File**, **Settings**, toolbar actions. | No orphaned controls; transcribe and options match menu behavior. |
+| TC-59 | **Help → Using Potato STT…** | Modal opens with usage text (PTT, File/Settings, tray if applicable); **OK** closes it. |
+| TC-60 | Use **File** and **Settings** menus (transcribe, options). | Actions work; no duplicate toolbar controls. |
 | TC-61 | **Help → Clear local data (uninstall caches)…**: read text; **Open folder**. | Explorer opens to folder containing `Clear-PotatoSTTData.ps1` (dev: `scripts\`; frozen: next to EXE). |
 | TC-62 | Same dialog: **Run in PowerShell** (quit app first in real cleanup). | New console opens; script runs (or prompts); no silent failure. |
 
@@ -101,7 +102,7 @@ Structured checks for **Windows** desktop validation. Record **Pass / Fail / Blo
 | ID | Steps | Expected |
 |----|--------|----------|
 | TC-80 | 30-minute session: mix PTT and 2–3 file transcribes. | Stable memory; no progressive slowdown requiring kill. |
-| TC-81 | Minimize to tray; PTT from another app. | Still records and pastes when rules allow. |
+| TC-81 | Close (**X**) to tray (with tray available); PTT from another app. | Still records and pastes when rules allow. |
 | TC-82 | Unicode and punctuation in dictated text. | Sensible output; clipboard/paste not corrupted. |
 
 ---
