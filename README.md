@@ -3,12 +3,15 @@
 Minimal Windows desktop voice-to-text app: push-to-talk, optional file transcription, and subtitles.
 
 Core flow:
-- press and hold your **push-to-talk key(s)** (default: **Right Ctrl**; configure under **Options** — add several keys or mouse buttons, or capture any key/button by choosing **Add key…**). Optional **filler word / phrase list** removes words like “um” from finished text (push-to-talk, file transcription, and subtitles). By default the list includes **`uh`** and **`um`** and the feature is **on** until you change it under **Options**.
+- press and hold your **push-to-talk key(s)** (default: **Right Ctrl**; configure under **Options** — add several keys, mouse buttons, or keyboard chords by choosing **Add key…**). Optional **filler word / phrase list** removes words like “um” from finished text (push-to-talk, file transcription, and subtitles). By default the list includes **`uh`** and **`um`** and the feature is **on** until you change it under **Options**.
+- use **Hold to Ask Web** in the main window to record a spoken query, then release to transcribe and ask **OpenCode** for a web summary; results appear in a popup notification window. Under **Options**, you can bind the same kinds of keys, mouse buttons, or keyboard chords as push-to-talk for **Hold to Ask Web** (optional). You can also enable **double-tap a push-to-talk key/button**: holding it once records normal dictation, while tap once then press-and-hold the same key/button records a web query. An on-screen cue shows while recording and while the search runs.
 - capture microphone audio
 - transcribe (default: ONNX ASR / Parakeet TDT)
 - optional **local Russian → English translation** after push-to-talk: enable **Translate push-to-talk transcripts to English** under **Options** (or **Ctrl+,**). A **warning** offers **Agree** or **Refuse** (Refuse is default); **Agree** turns the feature on and starts downloading the **Marian model (~300 MB)** from Hugging Face in the background **if it is not already** in your local Hugging Face cache (internet required). The model is **not** bundled in the EXE. **PyTorch** and **transformers** are included in the **regular Windows EXE build** (`build_windows_exe.ps1`) so users do not install them by hand. The transcript list shows the recognized text and, when translation is on, an **English:** line with the translation when it differs from that recognition; **paste** is English only after the Marian model has downloaded and loaded successfully. When running from source without torch, the app can offer **pip** to install dependencies.
 - paste into the app that had focus when you **pressed** the key (also mirrored in this window)
 - when the **system tray** is available, the window **close** button (**X**) hides the app to the tray; **minimize** leaves a normal taskbar button. Use **File → Quit** (**Ctrl+Q**) or the tray menu **Quit** to exit completely.
+
+Options also include toggles for start/stop **audio cues**, on-screen **visual cues**, and enabling/disabling **web search** entirely.
 
 **Paste troubleshooting:** If text only appears here, click the target text field first, then use push-to-talk. Windows may block focus steal for elevated (Run as administrator) apps unless Potato STT is also elevated.
 
@@ -153,7 +156,8 @@ Optional **`-AllHuggingfaceHub`** deletes the **entire** Hugging Face hub cache 
 2. Start Potato STT (`python -m potato_stt` or `PotatoSTT.exe`).
 3. Click into Notepad so the caret is active.
 4. Hold your push-to-talk key (default **Right Ctrl**), speak, then release. On **Windows**, short **UI sounds** mark the start and end of capture (bundled CC0 samples; see `potato_stt/assets/sounds/`).
-5. Expected:
+5. For web-style answers, press and hold **Hold to Ask Web**, speak your query, and release. Or enable the double-tap option: hold your push-to-talk key/button once for normal dictation, or tap it once then press-and-hold it again to record a web query. The app runs `opencode` in non-interactive mode and shows the returned summary in a popup.
+6. Expected:
    - transcript appears in the Potato STT window
    - same transcript is pasted at your active cursor
 
@@ -171,3 +175,4 @@ The app shows a progress bar:
 - This MVP uses “push-to-talk” (transcribe after you release the key), not true word-level streaming. **Windows:** start/stop cues play bundled WAV clips via `winsound` (async); they are skipped when quitting during an active recording. Samples are **Kenney** [*Interface Sounds*](https://kenney.nl/assets/interface-sounds) (`bong_001` for both start and stop, CC0 — see `potato_stt/assets/sounds/LICENSE-kenney-interface-sounds.txt`).
 - First startup can be very long in fallback mode because Python dependencies and models are downloaded.
 - If the Parakeet all-in-one package changes its local API contract, you may need to adjust `potato_stt/stt_client.py`.
+- Keyboard chords depend on what Windows and `pynput` expose. Ctrl/Alt/Shift/Win, Caps Lock, and F1-F12 are expected to work; laptop **Fn** is only bindable when the keyboard exposes it as a real key event.
