@@ -3,14 +3,13 @@ from __future__ import annotations
 import math
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import sounddevice as sd
@@ -30,6 +29,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QAction,
+    QBrush,
     QColor,
     QDesktopServices,
     QFont,
@@ -43,12 +43,14 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -58,6 +60,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QStyle,
     QSystemTrayIcon,
     QTextBrowser,
@@ -86,7 +89,9 @@ from potato_stt.stt_client import transcribe_wav
 from potato_stt.subtitle_export import cues_to_srt, cues_to_vtt
 from potato_stt.web_search_history import (
     append_history_entry,
+    count_unread_entries,
     load_history_entries,
+    mark_history_entry,
     tray_message_body,
 )
 from potato_stt.transcript_utils import (
@@ -122,6 +127,7 @@ from potato_stt.ptt_keys import (
     spec_label,
     specs_summary_phrase,
 )
+from potato_stt.web_search_runner import run_web_search_cli
 from potato_stt.win32_startup import (
     is_run_at_startup_enabled,
     set_run_at_startup_enabled,
@@ -137,6 +143,12 @@ TRANSLATE_RU_EN_ENABLED = "ui/translate_ru_en_enabled"
 TRANSLATION_MODEL_FETCH_APPROVED = "ui/translation_model_fetch_approved"
 WEB_SEARCH_ENABLED = "web_search/enabled"
 WEB_DOUBLE_TAP_ENABLED = "web_search/double_tap_enabled"
+WEB_DOUBLE_TAP_WINDOW_MS = "web_search/double_tap_window_ms"
+WEB_SEARCH_ARGV_LINE = "web_search/argv_line"
+WEB_SEARCH_USE_SHELL = "web_search/use_shell"
+WEB_MULTI_TAP_MODE = "web_search/multi_tap_mode"
+WEB_MULTI_TAP_SECOND_PRESS_WEB = "second_press_web"
+WEB_MULTI_TAP_DOUBLE_PTT_TRIPLE_WEB = "double_ptt_triple_web"
 # First-run defaults (used when keys are absent; existing QSettings win once saved).
 AUDIO_CUES_ENABLED_DEFAULT = True
 VISUAL_CUES_ENABLED_DEFAULT = True
@@ -146,11 +158,16 @@ TRANSLATE_RU_EN_ENABLED_DEFAULT = False
 TRANSLATION_MODEL_FETCH_APPROVED_DEFAULT = False
 WEB_SEARCH_ENABLED_DEFAULT = True
 WEB_DOUBLE_TAP_ENABLED_DEFAULT = False
+WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT = 450
+WEB_MULTI_TAP_MODE_DEFAULT = WEB_MULTI_TAP_SECOND_PRESS_WEB
 
-# Max concurrent OpenCode subprocesses for web search (STT still one-at-a-time per mic).
+# Max concurrent web-search subprocesses (STT still one-at-a-time per mic).
 WEB_OPENCODE_MAX_CONCURRENT = 2
-DOUBLE_TAP_WINDOW_SECONDS = 0.45
-DOUBLE_TAP_HOLD_THRESHOLD_SECONDS = 0.24
+DOUBLE_TAP_WINDOW_MS_MIN = 150
+DOUBLE_TAP_WINDOW_MS_MAX = 1500
+
+# Tray balloon when the main window is not visible (OS may still cap duration).
+WEB_TRAY_MESSAGE_MS_WHEN_HIDDEN = 25000
 
 
 def _markdown_fence(text: str) -> str:
@@ -340,10 +357,15 @@ class PttCaptureDialog(QDialog):
 class OptionsWindow(QWidget):
     """Separate top-level window for app settings."""
 
-    def __init__(self, main_window: QWidget, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        main_window: QWidget,
+        qsettings: QSettings,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self._main = main_window
-        self._settings = QSettings("PotatoSTT", "PotatoSTT")
+        self._settings = qsettings
         self._really_close = False
         self.setWindowTitle("Options")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowCloseButtonHint)
@@ -451,14 +473,16 @@ class OptionsWindow(QWidget):
         layout.addLayout(_ws_btn_row)
         _ws_help = QLabel(
             "Hold a bound key or mouse button to record a web query (same as the main-window button). "
-            "Release to transcribe and run OpenCode. If the list is empty, only the button works. "
-            "If a key is also a push-to-talk key, push-to-talk takes priority."
+            "Release to transcribe and run your configured web-search command (built-in OpenCode when empty). "
+            "If the list is empty, only the button works. If a key is also a push-to-talk key, push-to-talk takes priority."
         )
         _ws_help.setWordWrap(True)
         _ws_help.setStyleSheet("color: #888888; font-size: 11px;")
         layout.addWidget(_ws_help)
 
-        self._web_double_tap_cb = QCheckBox("Double-tap a push-to-talk key/button for web search")
+        self._web_double_tap_cb = QCheckBox(
+            "Multi-tap push-to-talk keys for web search (same physical key as dictation)"
+        )
         self._web_double_tap_cb.setChecked(
             bool(
                 self._settings.value(
@@ -469,11 +493,74 @@ class OptionsWindow(QWidget):
             )
         )
         self._web_double_tap_cb.setToolTip(
-            "When enabled, a normal hold records push-to-talk. "
-            "Tap once, then press-and-hold the same key/button to record a web query."
+            "When enabled, a push-to-talk key can also start a web query using the gesture you select below. "
+            "The delay applies between taps/clicks and before dictation starts on a plain hold."
         )
         self._web_double_tap_cb.toggled.connect(self._on_web_double_tap_toggled)
         layout.addWidget(self._web_double_tap_cb)
+
+        dt_row = QHBoxLayout()
+        dt_row.addWidget(QLabel("Multi-tap delay (ms):"))
+        self._web_double_tap_window_spin = QSpinBox()
+        self._web_double_tap_window_spin.setRange(
+            DOUBLE_TAP_WINDOW_MS_MIN,
+            DOUBLE_TAP_WINDOW_MS_MAX,
+        )
+        self._web_double_tap_window_spin.setSingleStep(25)
+        self._web_double_tap_window_spin.setSuffix(" ms")
+        self._web_double_tap_window_spin.setToolTip(
+            "Maximum time between tap release and the next press (multi-tap), and how long to wait "
+            "before treating a single hold as normal dictation."
+        )
+        self._web_double_tap_window_spin.setValue(
+            int(
+                self._settings.value(
+                    WEB_DOUBLE_TAP_WINDOW_MS,
+                    WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT,
+                    type=int,
+                )
+            )
+        )
+        self._web_double_tap_window_spin.valueChanged.connect(self._on_web_double_tap_window_changed)
+        dt_row.addWidget(self._web_double_tap_window_spin)
+        dt_row.addStretch(1)
+        layout.addLayout(dt_row)
+
+        layout.addWidget(QLabel("Multi-tap gesture:"))
+        self._web_multi_tap_combo = QComboBox()
+        self._web_multi_tap_combo.addItem(
+            "Once, release, then press-and-hold — web search (hold alone — dictation)",
+            WEB_MULTI_TAP_SECOND_PRESS_WEB,
+        )
+        self._web_multi_tap_combo.addItem(
+            "Double-tap-then-hold — dictation; third tap — start web search",
+            WEB_MULTI_TAP_DOUBLE_PTT_TRIPLE_WEB,
+        )
+        OptionsWindow._select_combo_by_data(
+            self._web_multi_tap_combo, OptionsWindow._stored_multi_tap_mode(self._settings)
+        )
+        self._web_multi_tap_combo.currentIndexChanged.connect(self._on_web_multi_tap_mode_changed)
+        layout.addWidget(self._web_multi_tap_combo)
+
+        self._web_search_cmd_label = QLabel("Web search command (leave empty for built-in OpenCode):")
+        layout.addWidget(self._web_search_cmd_label)
+        self._web_search_cmd_edit = QLineEdit()
+        self._web_search_cmd_edit.setPlaceholderText(
+            'Example: opencode run --format default "{prompt}"   — placeholders: {query}, {prompt}, {query_json}'
+        )
+        _cmd0 = self._settings.value(WEB_SEARCH_ARGV_LINE, "", type=str)
+        self._web_search_cmd_edit.setText(_cmd0 if isinstance(_cmd0, str) else "")
+        self._web_search_cmd_edit.editingFinished.connect(self._on_web_search_cmd_finished)
+        layout.addWidget(self._web_search_cmd_edit)
+
+        self._web_search_shell_cb = QCheckBox(
+            "Run command through the system shell (cmd.exe) — less safe; enables pipes/redirection"
+        )
+        self._web_search_shell_cb.setChecked(
+            bool(self._settings.value(WEB_SEARCH_USE_SHELL, False, type=bool))
+        )
+        self._web_search_shell_cb.toggled.connect(self._on_web_search_use_shell_toggled)
+        layout.addWidget(self._web_search_shell_cb)
 
         self._sync_web_search_controls_enabled()
 
@@ -549,6 +636,21 @@ class OptionsWindow(QWidget):
         self._really_close = True
         self.close()
 
+    @staticmethod
+    def _stored_multi_tap_mode(settings: QSettings) -> str:
+        v = settings.value(WEB_MULTI_TAP_MODE, WEB_MULTI_TAP_MODE_DEFAULT, type=str)
+        if v == WEB_MULTI_TAP_DOUBLE_PTT_TRIPLE_WEB:
+            return WEB_MULTI_TAP_DOUBLE_PTT_TRIPLE_WEB
+        return WEB_MULTI_TAP_SECOND_PRESS_WEB
+
+    @staticmethod
+    def _select_combo_by_data(combo: QComboBox, data: str) -> None:
+        for i in range(combo.count()):
+            if combo.itemData(i) == data:
+                combo.setCurrentIndex(i)
+                return
+        combo.setCurrentIndex(0)
+
     def _populate_ptt_list(self) -> None:
         self._ptt_list.clear()
         for spec in load_ptt_specs(self._settings):
@@ -576,6 +678,11 @@ class OptionsWindow(QWidget):
             self._add_web_search_btn,
             self._remove_web_search_btn,
             self._web_double_tap_cb,
+            self._web_double_tap_window_spin,
+            self._web_multi_tap_combo,
+            self._web_search_cmd_label,
+            self._web_search_cmd_edit,
+            self._web_search_shell_cb,
         ):
             w.setEnabled(enabled)
 
@@ -675,6 +782,42 @@ class OptionsWindow(QWidget):
             )
         )
         self._web_search_enabled_cb.blockSignals(False)
+        self._web_double_tap_cb.blockSignals(True)
+        self._web_double_tap_cb.setChecked(
+            bool(
+                self._settings.value(
+                    WEB_DOUBLE_TAP_ENABLED,
+                    WEB_DOUBLE_TAP_ENABLED_DEFAULT,
+                    type=bool,
+                )
+            )
+        )
+        self._web_double_tap_cb.blockSignals(False)
+        self._web_double_tap_window_spin.blockSignals(True)
+        self._web_double_tap_window_spin.setValue(
+            int(
+                self._settings.value(
+                    WEB_DOUBLE_TAP_WINDOW_MS,
+                    WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT,
+                    type=int,
+                )
+            )
+        )
+        self._web_double_tap_window_spin.blockSignals(False)
+        self._web_search_cmd_edit.blockSignals(True)
+        _cmd = self._settings.value(WEB_SEARCH_ARGV_LINE, "", type=str)
+        self._web_search_cmd_edit.setText(_cmd if isinstance(_cmd, str) else "")
+        self._web_search_cmd_edit.blockSignals(False)
+        self._web_search_shell_cb.blockSignals(True)
+        self._web_search_shell_cb.setChecked(
+            bool(self._settings.value(WEB_SEARCH_USE_SHELL, False, type=bool))
+        )
+        self._web_search_shell_cb.blockSignals(False)
+        self._web_multi_tap_combo.blockSignals(True)
+        OptionsWindow._select_combo_by_data(
+            self._web_multi_tap_combo, OptionsWindow._stored_multi_tap_mode(self._settings)
+        )
+        self._web_multi_tap_combo.blockSignals(False)
         self._sync_web_search_controls_enabled()
 
     def sync_cues_from_settings(self) -> None:
@@ -753,6 +896,29 @@ class OptionsWindow(QWidget):
     @Slot(bool)
     def _on_web_double_tap_toggled(self, checked: bool) -> None:
         self._settings.setValue(WEB_DOUBLE_TAP_ENABLED, bool(checked))
+        self._settings.sync()
+
+    @Slot(int)
+    def _on_web_double_tap_window_changed(self, value: int) -> None:
+        self._settings.setValue(WEB_DOUBLE_TAP_WINDOW_MS, int(value))
+        self._settings.sync()
+
+    @Slot()
+    def _on_web_search_cmd_finished(self) -> None:
+        self._settings.setValue(WEB_SEARCH_ARGV_LINE, self._web_search_cmd_edit.text().strip())
+        self._settings.sync()
+
+    @Slot(bool)
+    def _on_web_search_use_shell_toggled(self, checked: bool) -> None:
+        self._settings.setValue(WEB_SEARCH_USE_SHELL, bool(checked))
+        self._settings.sync()
+
+    @Slot()
+    def _on_web_multi_tap_mode_changed(self) -> None:
+        d = self._web_multi_tap_combo.currentData()
+        if isinstance(d, str):
+            self._settings.setValue(WEB_MULTI_TAP_MODE, d)
+            self._settings.sync()
 
     @Slot(bool)
     def _on_transcript_filter_enabled_toggled(self, checked: bool) -> None:
@@ -1049,9 +1215,16 @@ class WebSearchOverlay(QWidget):
 class WebSearchHistoryWindow(QWidget):
     """Browse past web search queries and Markdown summaries."""
 
-    def __init__(self, qsettings: QSettings, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        qsettings: QSettings,
+        parent: Optional[QWidget] = None,
+        *,
+        on_history_mutated: Optional[Callable[[], None]] = None,
+    ) -> None:
         super().__init__(parent)
         self._settings = qsettings
+        self._on_history_mutated = on_history_mutated
         self.setWindowTitle("Web search history")
         self.setMinimumSize(720, 480)
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowCloseButtonHint)
@@ -1066,24 +1239,124 @@ class WebSearchHistoryWindow(QWidget):
         split.addWidget(self._list, 0)
         split.addWidget(self._browser, 1)
         self._list.currentRowChanged.connect(self._on_row_changed)
-        self._reload_list()
+        self._reload_list(select_first=True)
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
-        self._reload_list()
+        self._reload_list(preserve_ts=self._selected_ts())
 
-    def _reload_list(self) -> None:
+    def refresh_from_settings(self, *, preserve_ts: Optional[float] = None) -> None:
+        self._reload_list(preserve_ts=preserve_ts if preserve_ts is not None else self._selected_ts())
+
+    def focus_last_unread(self) -> None:
+        self._reload_list(focus_last_unread=True)
+
+    def _selected_ts(self) -> Optional[float]:
+        row = self._list.currentRow()
+        if row < 0:
+            return None
+        item = self._list.item(row)
+        if item is None:
+            return None
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(data, dict):
+            return None
+        ts = data.get("ts")
+        return float(ts) if isinstance(ts, (int, float)) else None
+
+    def _reload_list(
+        self,
+        *,
+        select_first: bool = False,
+        preserve_ts: Optional[float] = None,
+        focus_last_unread: bool = False,
+    ) -> None:
+        prev_ts = preserve_ts
+        self._list.blockSignals(True)
         self._list.clear()
         entries = load_history_entries(self._settings)
         for e in reversed(entries):
             ts = float(e.get("ts", 0))
             q = str(e.get("query", ""))[:80]
             tstr = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
-            it = QListWidgetItem(f"{tstr} — {q}")
+            read = bool(e.get("read", True))
+            label = ("● " if not read else "   ") + f"{tstr} — {q}"
+            it = QListWidgetItem(label)
             it.setData(Qt.ItemDataRole.UserRole, e)
+            tip = "Unread — open to mark as read." if not read else "Opened before (read)."
+            it.setToolTip(tip)
+            if not read:
+                f = it.font()
+                f.setBold(True)
+                it.setFont(f)
+                it.setForeground(QBrush(QColor("#fbbf24")))
+            else:
+                it.setForeground(QBrush(QColor("#94a3b8")))
             self._list.addItem(it)
-        if self._list.count() > 0:
+        self._list.blockSignals(False)
+
+        target_row = -1
+        if focus_last_unread:
+            for row in range(self._list.count()):
+                item = self._list.item(row)
+                if item is None:
+                    continue
+                data = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(data, dict) and not bool(data.get("read", True)):
+                    target_row = row
+                    break
+        elif prev_ts is not None:
+            for row in range(self._list.count()):
+                item = self._list.item(row)
+                if item is None:
+                    continue
+                data = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(data, dict) and float(data.get("ts", 0)) == float(prev_ts):
+                    target_row = row
+                    break
+
+        if target_row >= 0:
+            self._list.setCurrentRow(target_row)
+        elif select_first and self._list.count() > 0:
             self._list.setCurrentRow(0)
+        elif self._list.count() > 0 and prev_ts is None and not focus_last_unread:
+            self._list.setCurrentRow(0)
+        else:
+            self._list.setCurrentRow(-1)
+            self._browser.clear()
+
+    def _mark_row_read(self, data: dict[str, Any]) -> None:
+        ts = data.get("ts")
+        if not isinstance(ts, (int, float)):
+            return
+        ts_f = float(ts)
+
+        def _match(e: dict[str, Any]) -> bool:
+            ets = e.get("ts")
+            return isinstance(ets, (int, float)) and float(ets) == ts_f
+
+        if mark_history_entry(self._settings, _match, read=True) > 0 and self._on_history_mutated is not None:
+            self._on_history_mutated()
+        read_now = True
+        data["read"] = read_now
+        data.setdefault("opened_ts", time.time())
+        row = self._list.currentRow()
+        if row >= 0:
+            item = self._list.item(row)
+            if item is not None:
+                cur = item.data(Qt.ItemDataRole.UserRole)
+                cur_ts = cur.get("ts") if isinstance(cur, dict) else None
+                if isinstance(cur_ts, (int, float)) and cur_ts == ts_f:
+                    ts_disp = float(data.get("ts", 0))
+                    q = str(data.get("query", ""))[:80]
+                    tstr = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts_disp))
+                    item.setText("   " + f"{tstr} — {q}")
+                    item.setToolTip("Opened before (read).")
+                    f = item.font()
+                    f.setBold(False)
+                    item.setFont(f)
+                    item.setForeground(QBrush(QColor("#94a3b8")))
+                    item.setData(Qt.ItemDataRole.UserRole, data)
 
     @Slot(int)
     def _on_row_changed(self, row: int) -> None:
@@ -1096,6 +1369,8 @@ class WebSearchHistoryWindow(QWidget):
         data = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(data, dict):
             return
+        if not bool(data.get("read", True)):
+            self._mark_row_read(data)
         q = str(data.get("query", ""))
         s = str(data.get("summary_md", ""))
         self._browser.setMarkdown(_web_search_dialog_markdown(q, s))
@@ -1128,6 +1403,9 @@ class MainWindow(QMainWindow):
         )
         self._web_search_btn.pressed.connect(self._on_web_search_button_pressed)
         self._web_search_btn.released.connect(self._on_web_search_button_released)
+        self._web_hist_btn = QPushButton("Web history")
+        self._web_hist_btn.setToolTip("Open past web searches. Highlights when there are unread results.")
+        self._web_hist_btn.clicked.connect(self._open_web_search_history_from_button)
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
@@ -1141,6 +1419,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._progress)
         web_btn_row = QHBoxLayout()
         web_btn_row.addWidget(self._web_search_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        web_btn_row.addWidget(self._web_hist_btn, 0, Qt.AlignmentFlag.AlignLeft)
         web_btn_row.addStretch(1)
         layout.addLayout(web_btn_row)
         layout.addWidget(self._transcript)
@@ -1163,7 +1442,7 @@ class MainWindow(QMainWindow):
         act_options_menu.triggered.connect(self._open_options)
         _settings_menu.addAction(act_options_menu)
         act_web_hist = QAction("Web search &history…", self)
-        act_web_hist.triggered.connect(self._open_web_search_history)
+        act_web_hist.triggered.connect(self._open_web_search_history_menu)
         _settings_menu.addAction(act_web_hist)
 
         _help_menu = self.menuBar().addMenu("&Help")
@@ -1220,11 +1499,13 @@ class MainWindow(QMainWindow):
         self._double_tap_last_up: dict[str, float] = {}
         self._double_tap_ptt_timers: dict[str, threading.Timer] = {}
         self._double_tap_ptt_started: set[str] = set()
+        self._mtp_phase: dict[str, int] = {}
+        self._mtp_last_release: dict[str, float] = {}
         self._onnx_engine: Optional[OnnxAsrEngine] = None
         # Window that had focus when push-to-talk started (for paste target).
         self._paste_target_hwnd: Optional[int] = None
 
-        self._pending_tray_web_summary: Optional[tuple[str, str]] = None
+        self._pending_tray_web_summary: Optional[tuple[float, str, str]] = None
         self._web_summary_dialog: Optional[QDialog] = None
         self._web_search_history_win: Optional[WebSearchHistoryWindow] = None
 
@@ -1244,7 +1525,7 @@ class MainWindow(QMainWindow):
             act_tray_file.triggered.connect(self._on_transcribe_file_chosen)
             tray_menu.addAction(act_tray_file)
             act_tray_web_hist = QAction("Web search history…", self)
-            act_tray_web_hist.triggered.connect(self._open_web_search_history)
+            act_tray_web_hist.triggered.connect(self._open_web_search_history_menu)
             tray_menu.addAction(act_tray_web_hist)
             if sys.platform == "win32":
                 act_tray_clear = QAction("Clear local data…", self)
@@ -1261,6 +1542,8 @@ class MainWindow(QMainWindow):
 
         self._sync_tray_ptt_tooltip()
         self._web_search_btn.setEnabled(self._web_search_enabled())
+        self._web_hist_btn.setEnabled(self._web_search_enabled())
+        self._refresh_web_history_unread_ui()
 
         # Start engine ensure in background, then register hotkey.
         threading.Thread(target=self._ensure_engine_and_start_hotkey, daemon=True).start()
@@ -1402,10 +1685,12 @@ class MainWindow(QMainWindow):
             self._web_search_overlay.hide()
         else:
             self._sync_web_search_overlay()
+        self._refresh_web_history_unread_ui()
 
     @Slot()
     def _on_web_search_enabled_changed(self) -> None:
         self._web_search_btn.setEnabled(self._web_search_enabled())
+        self._web_hist_btn.setEnabled(self._web_search_enabled())
         if not self._web_search_enabled():
             self._web_search_hold_tokens.clear()
             self._cancel_double_tap_timers()
@@ -1414,6 +1699,64 @@ class MainWindow(QMainWindow):
                 self._capture_mode = None
             self._web_search_overlay.hide()
         self.restart_ptt_listeners()
+
+    def _refresh_web_history_unread_ui(self) -> None:
+        n = count_unread_entries(load_history_entries(self._qsettings))
+        base = "Open past web searches."
+        self._web_hist_btn.setToolTip(f"{base} ({n} unread)." if n else base)
+        if not self._visual_cues_enabled():
+            self._web_hist_btn.setStyleSheet("")
+            return
+        if n > 0:
+            self._web_hist_btn.setStyleSheet(
+                "QPushButton { padding: 4px 10px; border-radius: 4px; "
+                "border: 2px solid #f59e0b; color: #fbbf24; font-weight: 600; }"
+            )
+        else:
+            self._web_hist_btn.setStyleSheet("")
+
+    def _on_web_history_store_changed(self) -> None:
+        self._refresh_web_history_unread_ui()
+        win = self._web_search_history_win
+        if win is not None and win.isVisible():
+            win.refresh_from_settings()
+
+    def _mark_web_history_read(self, ts: float, query: str, summary: str) -> None:
+        qn = query.strip()
+        sn = summary.strip()
+
+        def _match(e: dict[str, Any]) -> bool:
+            ets = e.get("ts")
+            if not isinstance(ets, (int, float)) or float(ets) != float(ts):
+                return False
+            if str(e.get("query", "")).strip() != qn:
+                return False
+            return str(e.get("summary_md", "")).strip() == sn
+
+        if mark_history_entry(self._qsettings, _match, read=True) > 0:
+            self._on_web_history_store_changed()
+
+    @Slot()
+    def _open_web_search_history_from_button(self) -> None:
+        self._open_web_search_history(focus_last_unread=True)
+
+    @Slot()
+    def _open_web_search_history_menu(self) -> None:
+        self._open_web_search_history(focus_last_unread=False)
+
+    @Slot()
+    def _open_web_search_history(self, *, focus_last_unread: bool = False) -> None:
+        if self._web_search_history_win is None:
+            self._web_search_history_win = WebSearchHistoryWindow(
+                self._qsettings,
+                self,
+                on_history_mutated=self._on_web_history_store_changed,
+            )
+        self._web_search_history_win.show()
+        self._web_search_history_win.raise_()
+        self._web_search_history_win.activateWindow()
+        if focus_last_unread:
+            self._web_search_history_win.focus_last_unread()
 
     def restart_ptt_listeners(self) -> None:
         if not self._stt_engine_ready:
@@ -1424,7 +1767,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def _open_options(self) -> None:
         if self._options_win is None:
-            self._options_win = OptionsWindow(self)
+            self._options_win = OptionsWindow(self, self._qsettings)
         self._options_win.sync_ptt_from_settings()
         self._options_win.sync_web_search_from_settings()
         self._options_win.sync_cues_from_settings()
@@ -1829,22 +2172,16 @@ class MainWindow(QMainWindow):
         self._sync_web_search_overlay()
 
     @Slot()
-    def _open_web_search_history(self) -> None:
-        if self._web_search_history_win is None:
-            self._web_search_history_win = WebSearchHistoryWindow(self._qsettings, self)
-        self._web_search_history_win.show()
-        self._web_search_history_win.raise_()
-        self._web_search_history_win.activateWindow()
-
-    @Slot()
     def _on_tray_message_clicked(self) -> None:
         payload = self._pending_tray_web_summary
         if payload is None:
             return
-        q, s = payload
-        self._show_web_summary_nonmodal(q, s)
+        ts, q, s = payload
+        self._show_web_summary_nonmodal(q, summary=s, history_ts=ts)
 
-    def _show_web_summary_nonmodal(self, query: str, summary: str) -> None:
+    def _show_web_summary_nonmodal(
+        self, query: str, *, summary: str, history_ts: Optional[float] = None
+    ) -> None:
         if self._web_summary_dialog is None:
             dlg = QDialog(self)
             dlg.setWindowTitle("Web search summary")
@@ -1872,6 +2209,16 @@ class MainWindow(QMainWindow):
         dlg2.show()
         dlg2.raise_()
         dlg2.activateWindow()
+        if history_ts is not None:
+            self._mark_web_history_read(history_ts, query, summary)
+
+    def _should_auto_show_web_summary_window(self) -> bool:
+        """Show the in-app summary only when the main window is actually on screen."""
+        if not self.isVisible():
+            return False
+        if self.windowState() & Qt.WindowState.WindowMinimized:
+            return False
+        return True
 
     @Slot(bool)
     def _on_recording_overlay(self, active: bool) -> None:
@@ -2211,12 +2558,25 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def _double_tap_delay_seconds(self) -> float:
+        raw = int(
+            self._qsettings.value(
+                WEB_DOUBLE_TAP_WINDOW_MS,
+                WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT,
+                type=int,
+            )
+        )
+        ms = max(DOUBLE_TAP_WINDOW_MS_MIN, min(DOUBLE_TAP_WINDOW_MS_MAX, raw))
+        return ms / 1000.0
+
     def _cancel_double_tap_timers(self) -> None:
         with self._double_tap_lock:
             timers = list(self._double_tap_ptt_timers.values())
             self._double_tap_ptt_timers.clear()
             self._double_tap_down_at.clear()
             self._double_tap_ptt_started.clear()
+            self._mtp_phase.clear()
+            self._mtp_last_release.clear()
         for t in timers:
             try:
                 t.cancel()
@@ -2230,33 +2590,91 @@ class MainWindow(QMainWindow):
             self._double_tap_ptt_timers.pop(token, None)
             self._double_tap_ptt_started.add(token)
             self._double_tap_last_up.pop(token, None)
+            self._mtp_phase.pop(token, None)
+            self._mtp_last_release.pop(token, None)
         self._add_ptt_token(token)
+
+    def _multi_tap_mode(self) -> str:
+        return OptionsWindow._stored_multi_tap_mode(self._qsettings)
 
     def _handle_double_tap_press(self, token: str) -> bool:
         if not self._web_double_tap_enabled():
             return False
+        if self._multi_tap_mode() == WEB_MULTI_TAP_DOUBLE_PTT_TRIPLE_WEB:
+            return self._mtp_press_double_ptt_triple_web(token)
+        return self._mtp_press_second_press_web(token)
+
+    def _mtp_press_second_press_web(self, token: str) -> bool:
         now = time.monotonic()
+        start_web = False
         with self._double_tap_lock:
             last_up = self._double_tap_last_up.get(token)
-            if last_up is not None and now - last_up <= DOUBLE_TAP_WINDOW_SECONDS:
+            if last_up is not None and now - last_up <= self._double_tap_delay_seconds():
                 self._double_tap_last_up.pop(token, None)
                 self._double_tap_down_at[token] = now
                 self._double_tap_ptt_started.discard(token)
                 start_web = True
             else:
-                start_web = False
                 if token in self._double_tap_down_at:
                     return True
                 self._double_tap_down_at[token] = now
                 self._double_tap_ptt_started.discard(token)
                 timer = threading.Timer(
-                    DOUBLE_TAP_HOLD_THRESHOLD_SECONDS,
+                    self._double_tap_delay_seconds(),
                     self._double_tap_hold_timer_fired,
                     args=(token,),
                 )
                 timer.daemon = True
                 self._double_tap_ptt_timers[token] = timer
                 timer.start()
+        if start_web:
+            self._add_web_search_token(token, allow_unconfigured=True)
+        return True
+
+    def _mtp_press_double_ptt_triple_web(self, token: str) -> bool:
+        now = time.monotonic()
+        T = self._double_tap_delay_seconds()
+        start_web = False
+        cancel_timer: Optional[threading.Timer] = None
+        with self._double_tap_lock:
+            last_rel = self._mtp_last_release.get(token)
+            if last_rel is not None and now - last_rel > T:
+                self._mtp_phase.pop(token, None)
+                self._mtp_last_release.pop(token, None)
+                last_rel = None
+
+            phase = self._mtp_phase.get(token, 0)
+
+            if phase == 2 and last_rel is not None and now - last_rel <= T:
+                cancel_timer = self._double_tap_ptt_timers.pop(token, None)
+                self._mtp_phase.pop(token, None)
+                self._mtp_last_release.pop(token, None)
+                self._double_tap_down_at.pop(token, None)
+                start_web = True
+            elif phase == 1 and last_rel is not None and now - last_rel <= T:
+                if token in self._double_tap_down_at:
+                    return True
+                self._double_tap_down_at[token] = now
+                self._double_tap_ptt_started.discard(token)
+                timer = threading.Timer(T, self._double_tap_hold_timer_fired, args=(token,))
+                timer.daemon = True
+                self._double_tap_ptt_timers[token] = timer
+                timer.start()
+            else:
+                if token in self._double_tap_down_at:
+                    return True
+                self._double_tap_down_at[token] = now
+                self._double_tap_ptt_started.discard(token)
+                timer = threading.Timer(T, self._double_tap_hold_timer_fired, args=(token,))
+                timer.daemon = True
+                self._double_tap_ptt_timers[token] = timer
+                timer.start()
+
+        if cancel_timer is not None:
+            try:
+                cancel_timer.cancel()
+            except Exception:
+                pass
         if start_web:
             self._add_web_search_token(token, allow_unconfigured=True)
         return True
@@ -2269,7 +2687,11 @@ class MainWindow(QMainWindow):
                 self._double_tap_down_at.pop(token, None)
                 self._double_tap_ptt_started.discard(token)
             self._remove_web_search_token(token)
+            self._mtp_phase.pop(token, None)
+            self._mtp_last_release.pop(token, None)
             return True
+        if self._multi_tap_mode() == WEB_MULTI_TAP_DOUBLE_PTT_TRIPLE_WEB:
+            return self._mtp_release_double_ptt_triple_web(token)
 
         now = time.monotonic()
         with self._double_tap_lock:
@@ -2284,10 +2706,41 @@ class MainWindow(QMainWindow):
             return True
         if down_at is None:
             return False
-        if now - down_at <= DOUBLE_TAP_HOLD_THRESHOLD_SECONDS:
+        if now - down_at <= self._double_tap_delay_seconds():
             with self._double_tap_lock:
                 self._double_tap_last_up[token] = now
         return True
+
+    def _mtp_release_double_ptt_triple_web(self, token: str) -> bool:
+        now = time.monotonic()
+        T = self._double_tap_delay_seconds()
+        with self._double_tap_lock:
+            down_at = self._double_tap_down_at.pop(token, None)
+            timer = self._double_tap_ptt_timers.pop(token, None)
+            ptt_started = token in self._double_tap_ptt_started
+            self._double_tap_ptt_started.discard(token)
+        if timer is not None:
+            try:
+                timer.cancel()
+            except Exception:
+                pass
+        if ptt_started:
+            self._remove_ptt_token(token)
+            self._mtp_phase.pop(token, None)
+            self._mtp_last_release.pop(token, None)
+            return True
+        if down_at is None:
+            return False
+        if now - down_at <= T:
+            with self._double_tap_lock:
+                phase = self._mtp_phase.get(token, 0)
+                if phase == 0:
+                    self._mtp_phase[token] = 1
+                elif phase == 1:
+                    self._mtp_phase[token] = 2
+                self._mtp_last_release[token] = now
+            return True
+        return False
 
     @staticmethod
     def _spec_hold_token(spec: str) -> str:
@@ -2582,9 +3035,9 @@ class MainWindow(QMainWindow):
                         self.signals.transcriptAppend.emit(cleaned)
                         if capture_mode == "web":
                             self.signals.micSttBusy.emit(False)
-                            self.signals.statusChanged.emit("Searching web with OpenCode...")
+                            self.signals.statusChanged.emit("Searching web…")
                             with self._web_opencode_semaphore:
-                                summary = self._run_opencode_web_search(cleaned)
+                                summary = self._run_web_search_command(cleaned)
                             self.signals.webSearchReady.emit(cleaned, summary)
                             self.signals.statusChanged.emit(
                                 f"Web summary ready in {took:.1f}s + search time. Ready. Hold "
@@ -2627,86 +3080,41 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=_job, args=(pcm, mode), daemon=True).start()
 
-    def _run_opencode_web_search(self, query: str) -> str:
-        opencode_bin = shutil.which("opencode")
-        if not opencode_bin:
-            raise RuntimeError(
-                "OpenCode CLI not found in PATH. Install OpenCode or add it to PATH."
-            )
-        query = query.strip()
-        if not query:
-            raise RuntimeError("No search query was recognized from the recording.")
-        prompt = (
-            f"Search the web for this exact user query: {query}\n\n"
-            f"User query: {query}\n\n"
-            "Do not ask the user for another query. The query above is the complete query.\n"
-            "Use OpenCode's websearch tool before answering.\n\n"
-            "Return:\n"
-            "- A concise answer in 4-8 bullets.\n"
-            "- Practical takeaways first.\n"
-            "- A final Sources section with clickable URLs.\n"
-            "- A short uncertainty note if sources disagree or evidence is weak."
+    def _run_web_search_command(self, query: str) -> str:
+        line = self._qsettings.value(WEB_SEARCH_ARGV_LINE, "", type=str)
+        if not isinstance(line, str):
+            line = ""
+        use_shell = bool(self._qsettings.value(WEB_SEARCH_USE_SHELL, False, type=bool))
+        timeout_s = max(45, int(self.settings.stt_timeout_seconds) * 6)
+        return run_web_search_cli(
+            line.strip() or None,
+            query=query,
+            use_shell=use_shell,
+            timeout_seconds=timeout_s,
         )
-        # Capture bytes: on some Windows setups `text=True` still wraps pipes with the system
-        # code page (e.g. cp1251), which raises UnicodeDecodeError in subprocess._readerthread
-        # and mojibakes UTF-8 output. Decode as UTF-8 in-process instead.
-        _opencode_env = {
-            **os.environ,
-            "PYTHONUTF8": "1",
-            "PYTHONIOENCODING": "utf-8",
-        }
-        try:
-            proc = subprocess.run(
-                [opencode_bin, "run", "--format", "default", prompt],
-                capture_output=True,
-                text=False,
-                env=_opencode_env,
-                timeout=max(45, int(self.settings.stt_timeout_seconds) * 6),
-                check=False,
-            )
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError(
-                "OpenCode timed out while generating a web summary. "
-                "Try a shorter query or check provider/auth setup."
-            ) from e
-        out_raw = proc.stdout if proc.stdout is not None else b""
-        err_raw = proc.stderr if proc.stderr is not None else b""
-        if proc.returncode != 0:
-            detail = self._strip_ansi(
-                (self._decode_cli_bytes(err_raw) + self._decode_cli_bytes(out_raw)).strip()
-            )
-            raise RuntimeError(f"OpenCode failed (exit {proc.returncode}): {detail}")
-        out = self._strip_ansi(self._decode_cli_bytes(out_raw).strip())
-        if not out:
-            raise RuntimeError("OpenCode returned an empty response.")
-        return out
-
-    @staticmethod
-    def _decode_cli_bytes(data: bytes | bytearray) -> str:
-        if not data:
-            return ""
-        return bytes(data).decode("utf-8", errors="replace")
-
-    @staticmethod
-    def _strip_ansi(text: str) -> str:
-        if not text:
-            return ""
-        return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
 
     @Slot(str, str)
     def _on_web_search_ready(self, query: str, summary: str) -> None:
-        append_history_entry(self._qsettings, query=query, summary_md=summary)
-        self._show_web_summary_nonmodal(query, summary)
+        ts = append_history_entry(self._qsettings, query=query, summary_md=summary)
+        show_window = self._should_auto_show_web_summary_window()
+        if show_window:
+            self._show_web_summary_nonmodal(query, summary=summary, history_ts=ts)
+        else:
+            self._refresh_web_history_unread_ui()
+            win = self._web_search_history_win
+            if win is not None and win.isVisible():
+                win.refresh_from_settings()
         if self._tray_icon is not None:
             qtitle = query.strip().replace("\n", " ")
             if len(qtitle) > 64:
                 qtitle = qtitle[:61] + "…"
-            self._pending_tray_web_summary = (query, summary)
+            self._pending_tray_web_summary = (ts, query, summary)
+            tray_ms = WEB_TRAY_MESSAGE_MS_WHEN_HIDDEN if not show_window else 8000
             self._tray_icon.showMessage(
                 qtitle or "Web search",
                 tray_message_body(summary),
                 QSystemTrayIcon.MessageIcon.Information,
-                8000,
+                tray_ms,
             )
         self.signals.webSearchOverlaySyncRequest.emit()
 
