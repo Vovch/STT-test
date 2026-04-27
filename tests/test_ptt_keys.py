@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pynput import keyboard
 
-from potato_stt.ptt_keys import (
+from potato_stt.input.ptt_keys import (
     build_chord_spec,
     keyboard_chord_matches_spec,
     normalize_spec,

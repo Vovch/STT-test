@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from potato_stt.subtitle_export import (
+from potato_stt.core.subtitle_export import (
     cues_to_srt,
     polish_cues_merge_short_fragments,
     tokens_to_cues,

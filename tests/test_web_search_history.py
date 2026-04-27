@@ -7,7 +7,7 @@ import unittest
 
 from PySide6.QtCore import QSettings
 
-from potato_stt.web_search_history import (
+from potato_stt.web_search.history import (
     HISTORY_SETTING_KEY,
     append_history_entry,
     count_unread_entries,

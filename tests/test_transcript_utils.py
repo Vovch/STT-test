@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from potato_stt.transcript_utils import (
+from potato_stt.core.transcript_utils import (
     apply_word_filter,
     apply_word_filter_after_normalize,
     filter_subtitle_cues,

@@ -34,7 +34,7 @@ def is_translation_runtime_ready() -> bool:
         from transformers import MarianMTModel, MarianTokenizer  # noqa: F401
 
         return True
-    except ImportError:
+    except Exception:
         return False
 
 
@@ -175,7 +175,7 @@ def translate_ru_en(
     try:
         import torch
         from transformers import MarianMTModel, MarianTokenizer  # noqa: F401
-    except ImportError as e:
+    except Exception as e:
         raise RuntimeError(
             "Local translation needs PyTorch (CPU) and transformers. From the repo venv, run:\n"
             "  pip install -r requirements-translate.txt\n"

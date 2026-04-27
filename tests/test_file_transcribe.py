@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from helpers import write_silence_wav_16k
 
-from potato_stt.file_transcribe import transcribe_file_to_text_and_cues
+from potato_stt.core.file_transcribe import transcribe_file_to_text_and_cues
 
 
 @dataclass

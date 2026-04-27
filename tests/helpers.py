@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from potato_stt.audio_utils import write_wav_from_int16_pcm
+from potato_stt.core.audio_utils import write_wav_from_int16_pcm
 
 
 def repo_root() -> Path:

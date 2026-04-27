@@ -39,7 +39,7 @@ def _ensure_stdio_streams() -> None:
 
 _ensure_stdio_streams()
 
-from potato_stt.ui_main import main  # noqa: E402
+from potato_stt.app import main  # noqa: E402
 
 
 if __name__ == "__main__":

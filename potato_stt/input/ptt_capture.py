@@ -7,7 +7,7 @@ from typing import Optional
 
 from pynput import keyboard, mouse
 
-from potato_stt.ptt_keys import (
+from potato_stt.input.ptt_keys import (
     build_chord_spec,
     keyboard_event_to_capture_spec,
     keyboard_modifier_for_event,

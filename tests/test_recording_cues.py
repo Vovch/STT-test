@@ -10,13 +10,13 @@ from unittest.mock import patch
 
 class TestRecordingCues(unittest.TestCase):
     def test_sounds_dir_unfrozen(self) -> None:
-        import potato_stt.recording_cues as rc
+        import potato_stt.platform.recording_cues as rc
 
         d = rc._sounds_dir()
         self.assertTrue(str(d).replace("\\", "/").endswith("potato_stt/assets/sounds"))
 
     def test_sounds_dir_frozen(self) -> None:
-        import potato_stt.recording_cues as rc
+        import potato_stt.platform.recording_cues as rc
 
         fake_meipass = Path("/tmp/fake_meipass")
         with patch.object(rc.sys, "frozen", True, create=True):
@@ -25,7 +25,7 @@ class TestRecordingCues(unittest.TestCase):
         self.assertEqual(d, fake_meipass / "potato_stt" / "assets" / "sounds")
 
     def test_non_windows_no_crash(self) -> None:
-        import potato_stt.recording_cues as rc
+        import potato_stt.platform.recording_cues as rc
 
         if sys.platform == "win32":
             self.skipTest("Windows uses winsound")
@@ -37,7 +37,7 @@ class TestRecordingCues(unittest.TestCase):
     def test_windows_play_sound_when_file_exists(self) -> None:
         import winsound
 
-        import potato_stt.recording_cues as rc
+        import potato_stt.platform.recording_cues as rc
 
         repo = Path(__file__).resolve().parents[1]
         src = repo / "potato_stt" / "assets" / "sounds" / "recording_start.wav"
@@ -58,7 +58,7 @@ class TestRecordingCues(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "requires winsound")
     def test_missing_file_no_playsound(self) -> None:
-        import potato_stt.recording_cues as rc
+        import potato_stt.platform.recording_cues as rc
 
         empty = Path(__file__).resolve().parent / "nonexistent_cues_dir_xyz"
         with patch("winsound.PlaySound") as ps:

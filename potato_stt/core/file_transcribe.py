@@ -4,19 +4,19 @@ import math
 from pathlib import Path
 from typing import Callable, Optional
 
-from potato_stt.media_decode import (
+from potato_stt.core.media_decode import (
     decode_to_temp_wav_16k_mono,
     extract_chunk_wav_16k_mono,
     probe_media_duration_seconds,
 )
-from potato_stt.onnx_asr_engine import OnnxAsrEngine
-from potato_stt.stt_client import transcribe_wav_with_segments
-from potato_stt.subtitle_export import (
+from potato_stt.core.onnx_asr_engine import OnnxAsrEngine
+from potato_stt.core.stt_client import transcribe_wav_with_segments
+from potato_stt.core.subtitle_export import (
     segments_even_split_to_cues,
     single_cue,
     tokens_to_cues,
 )
-from potato_stt.transcript_utils import normalize_phrase_spacing
+from potato_stt.core.transcript_utils import normalize_phrase_spacing
 
 
 def _clamp_chunk_seconds(raw: float) -> float:

@@ -19,7 +19,7 @@ import time
 import pytest
 
 from potato_stt.config import Settings as RealSettings
-from potato_stt.subtitle_export import cues_to_srt
+from potato_stt.core.subtitle_export import cues_to_srt
 
 
 @pytest.fixture
@@ -30,15 +30,15 @@ def main_window(qtbot, monkeypatch):
         self._stt_engine_ready = True
 
     monkeypatch.setattr(
-        "potato_stt.ui_main.MainWindow._ensure_engine_and_start_hotkey",
+        "potato_stt.ui.windows.main_window.MainWindow._ensure_engine_and_start_hotkey",
         _skip_engine,
     )
     monkeypatch.setattr(
-        "potato_stt.ui_main.MainWindow._register_hotkey",
+        "potato_stt.ui.windows.main_window.MainWindow._register_hotkey",
         lambda self: None,
     )
 
-    from potato_stt.ui_main import MainWindow
+    from potato_stt.ui.windows.main_window import MainWindow
 
     w = MainWindow()
     qtbot.addWidget(w)
@@ -60,7 +60,7 @@ def test_file_transcribe_appends_transcript(main_window, qtbot, monkeypatch, tmp
         return "Synthetic line for e2e.", []
 
     monkeypatch.setattr(
-        "potato_stt.ui_main.transcribe_file_to_text_and_cues",
+        "potato_stt.controllers.file_transcribe_controller.transcribe_file_to_text_and_cues",
         _fake_transcribe,
     )
 
@@ -85,7 +85,7 @@ def test_file_transcribe_writes_subtitles_when_save_dialog_ok(
         return "hello e2e", list(cues)
 
     monkeypatch.setattr(
-        "potato_stt.ui_main.transcribe_file_to_text_and_cues",
+        "potato_stt.controllers.file_transcribe_controller.transcribe_file_to_text_and_cues",
         _fake_transcribe,
     )
 
@@ -94,7 +94,7 @@ def test_file_transcribe_writes_subtitles_when_save_dialog_ok(
             (str(out_srt), "SubRip (*.srt)"),
         ]
     )
-    monkeypatch.setattr("potato_stt.ui_main.QFileDialog.getSaveFileName", dlg)
+    monkeypatch.setattr("potato_stt.ui.windows.main_window.QFileDialog.getSaveFileName", dlg)
 
     main_window._start_file_transcribe(wav)
 
@@ -116,7 +116,7 @@ def test_file_transcribe_error_resets_to_ready_status(main_window, qtbot, monkey
         raise RuntimeError("forced failure for e2e")
 
     monkeypatch.setattr(
-        "potato_stt.ui_main.transcribe_file_to_text_and_cues",
+        "potato_stt.controllers.file_transcribe_controller.transcribe_file_to_text_and_cues",
         _boom,
     )
 
@@ -152,9 +152,9 @@ def test_options_window_reopens_after_close_button(main_window, qtbot) -> None:
 
 
 def test_web_search_dialog_markdown_structure() -> None:
-    from potato_stt import ui_main
+    from potato_stt.ui.markdown import web_search_dialog_markdown
 
-    md = ui_main._web_search_dialog_markdown("What is **Exa**?", "## Answer\n\nBody with [link](https://exa.ai/).")
+    md = web_search_dialog_markdown("What is **Exa**?", "## Answer\n\nBody with [link](https://exa.ai/).")
     assert "## Query" in md
     assert "## Summary" in md
     assert "```" in md
@@ -163,10 +163,10 @@ def test_web_search_dialog_markdown_structure() -> None:
 
 
 def test_markdown_fence_extends_when_query_contains_fence() -> None:
-    from potato_stt import ui_main
+    from potato_stt.ui.markdown import markdown_fence
 
     inner = "code with ``` inside"
-    f = ui_main._markdown_fence(inner)
+    f = markdown_fence(inner)
     assert f.startswith("````")
     assert f.endswith("````")
     assert inner in f
@@ -180,13 +180,13 @@ def test_default_web_search_invocation(main_window, monkeypatch) -> None:
         calls["kwargs"] = dict(kwargs)
         return subprocess.CompletedProcess(argv, 0, stdout=b"Summary from OpenCode", stderr=b"")
 
-    monkeypatch.setattr("potato_stt.web_search_runner.shutil.which", lambda _name: "opencode")
-    monkeypatch.setattr("potato_stt.web_search_runner.subprocess.run", _fake_run)
+    monkeypatch.setattr("potato_stt.web_search.runner.shutil.which", lambda _name: "opencode")
+    monkeypatch.setattr("potato_stt.web_search.runner.subprocess.run", _fake_run)
 
-    from potato_stt import ui_main
+    from potato_stt import settings_keys
 
-    main_window._qsettings.setValue(ui_main.WEB_SEARCH_ARGV_LINE, "")
-    main_window._qsettings.setValue(ui_main.WEB_SEARCH_USE_SHELL, False)
+    main_window._qsettings.setValue(settings_keys.WEB_SEARCH_ARGV_LINE, "")
+    main_window._qsettings.setValue(settings_keys.WEB_SEARCH_USE_SHELL, False)
     out = main_window._run_web_search_command("latest TypeScript 6 changes")
     assert out == "Summary from OpenCode"
     assert calls["argv"][0] == "opencode"
@@ -205,7 +205,7 @@ def test_default_web_search_invocation(main_window, monkeypatch) -> None:
 
 
 def test_double_tap_second_press_starts_web_search(main_window, monkeypatch) -> None:
-    from potato_stt import ui_main
+    from potato_stt import settings_keys
 
     token = "vk:163"
     web_starts: list[tuple[str, bool]] = []
@@ -214,21 +214,25 @@ def test_double_tap_second_press_starts_web_search(main_window, monkeypatch) -> 
         "_add_web_search_token",
         lambda tok, *, allow_unconfigured=False: web_starts.append((tok, allow_unconfigured)),
     )
-    main_window._qsettings.setValue(ui_main.WEB_SEARCH_ENABLED, True)
-    main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_ENABLED, True)
-    main_window._qsettings.setValue(ui_main.WEB_MULTI_TAP_MODE, ui_main.WEB_MULTI_TAP_SECOND_PRESS_WEB)
+    main_window._qsettings.setValue(settings_keys.WEB_SEARCH_ENABLED, True)
+    main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_ENABLED, True)
+    main_window._qsettings.setValue(
+        settings_keys.WEB_MULTI_TAP_MODE, settings_keys.WEB_MULTI_TAP_SECOND_PRESS_WEB
+    )
     try:
         assert main_window._handle_double_tap_press(token)
         assert main_window._handle_double_tap_release(token)
         assert main_window._handle_double_tap_press(token)
         assert web_starts == [(token, True)]
     finally:
-        main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_ENABLED, False)
-        main_window._qsettings.setValue(ui_main.WEB_MULTI_TAP_MODE, ui_main.WEB_MULTI_TAP_MODE_DEFAULT)
+        main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_ENABLED, False)
+        main_window._qsettings.setValue(
+            settings_keys.WEB_MULTI_TAP_MODE, settings_keys.WEB_MULTI_TAP_MODE_DEFAULT
+        )
 
 
 def test_triple_tap_third_press_starts_web_search(main_window, monkeypatch) -> None:
-    from potato_stt import ui_main
+    from potato_stt import settings_keys
 
     token = "vk:163"
     web_starts: list[tuple[str, bool]] = []
@@ -237,10 +241,12 @@ def test_triple_tap_third_press_starts_web_search(main_window, monkeypatch) -> N
         "_add_web_search_token",
         lambda tok, *, allow_unconfigured=False: web_starts.append((tok, allow_unconfigured)),
     )
-    main_window._qsettings.setValue(ui_main.WEB_SEARCH_ENABLED, True)
-    main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_ENABLED, True)
-    main_window._qsettings.setValue(ui_main.WEB_MULTI_TAP_MODE, ui_main.WEB_MULTI_TAP_DOUBLE_PTT_TRIPLE_WEB)
-    main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_WINDOW_MS, 5000)
+    main_window._qsettings.setValue(settings_keys.WEB_SEARCH_ENABLED, True)
+    main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_ENABLED, True)
+    main_window._qsettings.setValue(
+        settings_keys.WEB_MULTI_TAP_MODE, settings_keys.WEB_MULTI_TAP_DOUBLE_PTT_TRIPLE_WEB
+    )
+    main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_WINDOW_MS, 5000)
     try:
         assert main_window._handle_double_tap_press(token)
         assert main_window._handle_double_tap_release(token)
@@ -250,16 +256,18 @@ def test_triple_tap_third_press_starts_web_search(main_window, monkeypatch) -> N
         assert web_starts == [(token, True)]
     finally:
         main_window._cancel_double_tap_timers()
-        main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_ENABLED, False)
-        main_window._qsettings.setValue(ui_main.WEB_MULTI_TAP_MODE, ui_main.WEB_MULTI_TAP_MODE_DEFAULT)
+        main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_ENABLED, False)
         main_window._qsettings.setValue(
-            ui_main.WEB_DOUBLE_TAP_WINDOW_MS,
-            ui_main.WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT,
+            settings_keys.WEB_MULTI_TAP_MODE, settings_keys.WEB_MULTI_TAP_MODE_DEFAULT
+        )
+        main_window._qsettings.setValue(
+            settings_keys.WEB_DOUBLE_TAP_WINDOW_MS,
+            settings_keys.WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT,
         )
 
 
 def test_double_tap_delay_setting_controls_second_press_window(main_window, monkeypatch) -> None:
-    from potato_stt import ui_main
+    from potato_stt import settings_keys
 
     token = "vk:163"
     web_starts: list[tuple[str, bool]] = []
@@ -268,32 +276,37 @@ def test_double_tap_delay_setting_controls_second_press_window(main_window, monk
         "_add_web_search_token",
         lambda tok, *, allow_unconfigured=False: web_starts.append((tok, allow_unconfigured)),
     )
-    main_window._qsettings.setValue(ui_main.WEB_SEARCH_ENABLED, True)
-    main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_ENABLED, True)
-    main_window._qsettings.setValue(ui_main.WEB_MULTI_TAP_MODE, ui_main.WEB_MULTI_TAP_SECOND_PRESS_WEB)
+    main_window._qsettings.setValue(settings_keys.WEB_SEARCH_ENABLED, True)
+    main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_ENABLED, True)
+    main_window._qsettings.setValue(
+        settings_keys.WEB_MULTI_TAP_MODE, settings_keys.WEB_MULTI_TAP_SECOND_PRESS_WEB
+    )
     try:
-        main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_WINDOW_MS, 150)
-        main_window._double_tap_last_up[token] = time.monotonic() - 0.20
+        main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_WINDOW_MS, 150)
+        main_window._multi_tap.last_up[token] = time.monotonic() - 0.20
         assert main_window._handle_double_tap_press(token)
         assert web_starts == []
         assert main_window._handle_double_tap_release(token)
 
-        main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_WINDOW_MS, 250)
-        main_window._double_tap_last_up[token] = time.monotonic() - 0.20
+        main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_WINDOW_MS, 250)
+        main_window._multi_tap.last_up[token] = time.monotonic() - 0.20
         assert main_window._handle_double_tap_press(token)
         assert web_starts == [(token, True)]
     finally:
         main_window._cancel_double_tap_timers()
         main_window._qsettings.setValue(
-            ui_main.WEB_DOUBLE_TAP_WINDOW_MS,
-            ui_main.WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT,
+            settings_keys.WEB_DOUBLE_TAP_WINDOW_MS,
+            settings_keys.WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT,
         )
-        main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_ENABLED, False)
-        main_window._qsettings.setValue(ui_main.WEB_MULTI_TAP_MODE, ui_main.WEB_MULTI_TAP_MODE_DEFAULT)
+        main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_ENABLED, False)
+        main_window._qsettings.setValue(
+            settings_keys.WEB_MULTI_TAP_MODE, settings_keys.WEB_MULTI_TAP_MODE_DEFAULT
+        )
 
 
 def test_double_tap_delay_setting_controls_ptt_hold_timer(main_window, monkeypatch) -> None:
-    from potato_stt import ui_main
+    from potato_stt import settings_keys
+    from potato_stt.input import multi_tap as multi_tap_mod
 
     intervals: list[float] = []
 
@@ -309,22 +322,26 @@ def test_double_tap_delay_setting_controls_ptt_hold_timer(main_window, monkeypat
         def cancel(self) -> None:
             pass
 
-    monkeypatch.setattr(ui_main.threading, "Timer", FakeTimer)
-    main_window._qsettings.setValue(ui_main.WEB_SEARCH_ENABLED, True)
-    main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_ENABLED, True)
-    main_window._qsettings.setValue(ui_main.WEB_MULTI_TAP_MODE, ui_main.WEB_MULTI_TAP_SECOND_PRESS_WEB)
-    main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_WINDOW_MS, 1500)
+    monkeypatch.setattr(multi_tap_mod.threading, "Timer", FakeTimer)
+    main_window._qsettings.setValue(settings_keys.WEB_SEARCH_ENABLED, True)
+    main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_ENABLED, True)
+    main_window._qsettings.setValue(
+        settings_keys.WEB_MULTI_TAP_MODE, settings_keys.WEB_MULTI_TAP_SECOND_PRESS_WEB
+    )
+    main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_WINDOW_MS, 1500)
     try:
         assert main_window._handle_double_tap_press("vk:163")
         assert intervals == [1.5]
     finally:
         main_window._cancel_double_tap_timers()
         main_window._qsettings.setValue(
-            ui_main.WEB_DOUBLE_TAP_WINDOW_MS,
-            ui_main.WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT,
+            settings_keys.WEB_DOUBLE_TAP_WINDOW_MS,
+            settings_keys.WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT,
         )
-        main_window._qsettings.setValue(ui_main.WEB_DOUBLE_TAP_ENABLED, False)
-        main_window._qsettings.setValue(ui_main.WEB_MULTI_TAP_MODE, ui_main.WEB_MULTI_TAP_MODE_DEFAULT)
+        main_window._qsettings.setValue(settings_keys.WEB_DOUBLE_TAP_ENABLED, False)
+        main_window._qsettings.setValue(
+            settings_keys.WEB_MULTI_TAP_MODE, settings_keys.WEB_MULTI_TAP_MODE_DEFAULT
+        )
 
 
 def test_custom_web_search_argv_invocation(main_window, monkeypatch) -> None:
@@ -335,22 +352,24 @@ def test_custom_web_search_argv_invocation(main_window, monkeypatch) -> None:
         calls["kwargs"] = dict(kwargs)
         return subprocess.CompletedProcess(argv, 0, stdout=b"custom", stderr=b"")
 
-    monkeypatch.setattr("potato_stt.web_search_runner.subprocess.run", _fake_run)
-    from potato_stt import ui_main
+    monkeypatch.setattr("potato_stt.web_search.runner.subprocess.run", _fake_run)
+    from potato_stt import settings_keys
 
-    main_window._qsettings.setValue(ui_main.WEB_SEARCH_ARGV_LINE, 'python -c "print({query})"')
-    main_window._qsettings.setValue(ui_main.WEB_SEARCH_USE_SHELL, False)
+    main_window._qsettings.setValue(
+        settings_keys.WEB_SEARCH_ARGV_LINE, 'python -c "print({query})"'
+    )
+    main_window._qsettings.setValue(settings_keys.WEB_SEARCH_USE_SHELL, False)
     try:
         out = main_window._run_web_search_command("hi")
         assert out == "custom"
         joined = " ".join(calls["argv"])
         assert "hi" in joined
     finally:
-        main_window._qsettings.setValue(ui_main.WEB_SEARCH_ARGV_LINE, "")
+        main_window._qsettings.setValue(settings_keys.WEB_SEARCH_ARGV_LINE, "")
 
 
 def test_web_search_ready_skips_window_when_main_hidden(main_window, monkeypatch) -> None:
-    from potato_stt import ui_main
+    from potato_stt import settings_keys
     from PySide6.QtCore import Qt
 
     calls: list[tuple[str, int]] = []
@@ -366,7 +385,7 @@ def test_web_search_ready_skips_window_when_main_hidden(main_window, monkeypatch
     monkeypatch.setattr(main_window, "isVisible", lambda: False)
     main_window._on_web_search_ready("q", "s")
     main_window._show_web_summary_nonmodal.assert_not_called()
-    assert calls and calls[0][1] == ui_main.WEB_TRAY_MESSAGE_MS_WHEN_HIDDEN
+    assert calls and calls[0][1] == settings_keys.WEB_TRAY_MESSAGE_MS_WHEN_HIDDEN
 
     monkeypatch.setattr(main_window, "isVisible", lambda: True)
     monkeypatch.setattr(main_window, "windowState", lambda: Qt.WindowState.WindowNoState)
@@ -376,26 +395,27 @@ def test_web_search_ready_skips_window_when_main_hidden(main_window, monkeypatch
 
 
 def test_web_search_disabled_blocks_new_web_recordings(main_window, monkeypatch) -> None:
-    from potato_stt import ui_main
+    from potato_stt import settings_keys
 
     starts: list[str] = []
     monkeypatch.setattr(main_window, "_start_recording", lambda *, mode: starts.append(mode))
-    main_window._qsettings.setValue(ui_main.WEB_SEARCH_ENABLED, False)
+    main_window._qsettings.setValue(settings_keys.WEB_SEARCH_ENABLED, False)
     try:
         main_window._add_web_search_token("vk:163", allow_unconfigured=True)
         main_window._on_web_search_button_pressed()
         assert starts == []
         assert not main_window._web_search_enabled()
     finally:
-        main_window._qsettings.setValue(ui_main.WEB_SEARCH_ENABLED, True)
+        main_window._qsettings.setValue(settings_keys.WEB_SEARCH_ENABLED, True)
 
 
 def test_audio_cues_setting_suppresses_start_stop_sounds(main_window, monkeypatch) -> None:
-    from potato_stt import ui_main
+    from potato_stt import settings_keys
+    from potato_stt.controllers import recording_controller as rc
 
     calls: list[str] = []
-    monkeypatch.setattr(ui_main, "play_recording_started_cue", lambda: calls.append("start"))
-    monkeypatch.setattr(ui_main, "play_recording_stopped_cue", lambda: calls.append("stop"))
+    monkeypatch.setattr(rc, "play_recording_started_cue", lambda: calls.append("start"))
+    monkeypatch.setattr(rc, "play_recording_stopped_cue", lambda: calls.append("stop"))
 
     class FakeStream:
         def start(self) -> None:
@@ -407,27 +427,27 @@ def test_audio_cues_setting_suppresses_start_stop_sounds(main_window, monkeypatc
         def close(self) -> None:
             pass
 
-    monkeypatch.setattr(ui_main.sd, "InputStream", lambda **_kwargs: FakeStream())
-    main_window._qsettings.setValue(ui_main.AUDIO_CUES_ENABLED, False)
+    monkeypatch.setattr(rc.sd, "InputStream", lambda **_kwargs: FakeStream())
+    main_window._qsettings.setValue(settings_keys.AUDIO_CUES_ENABLED, False)
     try:
         main_window._start_recording(mode="ptt")
         main_window._stop_recording()
         assert calls == []
     finally:
-        main_window._qsettings.setValue(ui_main.AUDIO_CUES_ENABLED, True)
+        main_window._qsettings.setValue(settings_keys.AUDIO_CUES_ENABLED, True)
 
 
 def test_visual_cues_setting_hides_overlays(main_window) -> None:
-    from potato_stt import ui_main
+    from potato_stt import settings_keys
 
-    main_window._qsettings.setValue(ui_main.VISUAL_CUES_ENABLED, False)
+    main_window._qsettings.setValue(settings_keys.VISUAL_CUES_ENABLED, False)
     try:
         main_window._on_recording_overlay(True)
         main_window._sync_web_search_overlay()
         assert not main_window._recording_overlay.isVisible()
         assert not main_window._web_search_overlay.isVisible()
     finally:
-        main_window._qsettings.setValue(ui_main.VISUAL_CUES_ENABLED, True)
+        main_window._qsettings.setValue(settings_keys.VISUAL_CUES_ENABLED, True)
 
 
 def test_onnx_backend_starts_model_load_when_model_missing(qtbot, monkeypatch) -> None:
@@ -441,7 +461,7 @@ def test_onnx_backend_starts_model_load_when_model_missing(qtbot, monkeypatch) -
             onnx_asr_model="missing-model-xyz-e2e",
         )
 
-    monkeypatch.setattr("potato_stt.ui_main.Settings", _settings_onnx_missing_model)
+    monkeypatch.setattr("potato_stt.ui.windows.main_window.Settings", _settings_onnx_missing_model)
 
     load_calls: list[tuple[object, object]] = []
 
@@ -450,15 +470,15 @@ def test_onnx_backend_starts_model_load_when_model_missing(qtbot, monkeypatch) -
         raise RuntimeError("simulated model missing for e2e")
 
     monkeypatch.setattr(
-        "potato_stt.onnx_asr_engine.onnx_asr.load_model",
+        "potato_stt.core.onnx_asr_engine.onnx_asr.load_model",
         _fake_load_model,
     )
     monkeypatch.setattr(
-        "potato_stt.ui_main.MainWindow._register_hotkey",
+        "potato_stt.ui.windows.main_window.MainWindow._register_hotkey",
         lambda self: None,
     )
 
-    from potato_stt.ui_main import MainWindow
+    from potato_stt.ui.windows.main_window import MainWindow
 
     w = MainWindow()
     qtbot.addWidget(w)
@@ -494,7 +514,7 @@ def test_parakeet_backend_starts_package_download_when_not_installed(
             parakeet_launch_timeout_seconds=5,
         )
 
-    monkeypatch.setattr("potato_stt.ui_main.Settings", _settings_parakeet_no_package)
+    monkeypatch.setattr("potato_stt.ui.windows.main_window.Settings", _settings_parakeet_no_package)
 
     download_attempts: list[str] = []
 
@@ -503,19 +523,19 @@ def test_parakeet_backend_starts_package_download_when_not_installed(
         raise RuntimeError("e2e abort before HTTP")
 
     monkeypatch.setattr(
-        "potato_stt.parakeet_windows_installer._is_port_open",
+        "potato_stt.core.parakeet_windows_installer._is_port_open",
         lambda *args, **kwargs: False,
     )
     monkeypatch.setattr(
-        "potato_stt.parakeet_windows_installer._download_with_progress",
+        "potato_stt.core.parakeet_windows_installer._download_with_progress",
         _no_network_download,
     )
     monkeypatch.setattr(
-        "potato_stt.ui_main.MainWindow._register_hotkey",
+        "potato_stt.ui.windows.main_window.MainWindow._register_hotkey",
         lambda self: None,
     )
 
-    from potato_stt.ui_main import MainWindow
+    from potato_stt.ui.windows.main_window import MainWindow
 
     w = MainWindow()
     qtbot.addWidget(w)

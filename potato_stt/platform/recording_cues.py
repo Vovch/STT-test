@@ -12,7 +12,7 @@ from pathlib import Path
 def _sounds_dir() -> Path:
     if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
         return Path(sys._MEIPASS) / "potato_stt" / "assets" / "sounds"
-    return Path(__file__).resolve().parent / "assets" / "sounds"
+    return Path(__file__).resolve().parent.parent / "assets" / "sounds"
 
 
 def _play_cue(filename: str) -> None:

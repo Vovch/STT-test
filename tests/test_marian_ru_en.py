@@ -6,7 +6,7 @@ import os
 import unittest
 from unittest import mock
 
-from potato_stt.marian_ru_en import (
+from potato_stt.core.marian_ru_en import (
     is_translation_runtime_ready,
     marian_model_id,
     preload_translation_model,

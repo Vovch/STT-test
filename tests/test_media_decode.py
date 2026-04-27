@@ -13,7 +13,7 @@ from helpers import (
     write_silence_wav_16k,
 )
 
-from potato_stt.media_decode import (
+from potato_stt.core.media_decode import (
     FFMPEG_MISSING_USER_MESSAGE,
     FFmpegNotFoundError,
     decode_to_temp_wav_16k_mono,
@@ -39,7 +39,7 @@ class TestMediaDecode(unittest.TestCase):
         d = probe_media_duration_seconds(p)
         self.assertTrue(0.45 <= d <= 0.55)
 
-    @patch("potato_stt.media_decode.which_ffprobe", return_value=None)
+    @patch("potato_stt.core.media_decode.which_ffprobe", return_value=None)
     def test_probe_non_wav_raises_ffmpeg_not_found_when_ffprobe_missing(
         self, _mock: object
     ) -> None:

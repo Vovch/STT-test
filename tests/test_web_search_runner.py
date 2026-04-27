@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from potato_stt.web_search_runner import (
+from potato_stt.web_search.runner import (
     build_web_search_process_args,
     default_opencode_style_prompt,
     run_web_search_cli,
@@ -25,7 +25,7 @@ class WebSearchRunnerTests(unittest.TestCase):
         self.assertNotIn("{query}", s)
 
     def test_build_default_argv(self) -> None:
-        with patch("potato_stt.web_search_runner.shutil.which", return_value="/bin/opencode"):
+        with patch("potato_stt.web_search.runner.shutil.which", return_value="/bin/opencode"):
             argv, shell = build_web_search_process_args(None, query="q", use_shell=False)
         self.assertFalse(shell)
         self.assertEqual(argv[0], "/bin/opencode")
@@ -47,8 +47,8 @@ class WebSearchRunnerTests(unittest.TestCase):
         def _fake_run(argv, **_kwargs):
             return subprocess.CompletedProcess(argv, 0, stdout=b"ok out", stderr=b"")
 
-        with patch("potato_stt.web_search_runner.shutil.which", return_value="oc"):
-            with patch("potato_stt.web_search_runner.subprocess.run", _fake_run):
+        with patch("potato_stt.web_search.runner.shutil.which", return_value="oc"):
+            with patch("potato_stt.web_search.runner.subprocess.run", _fake_run):
                 out = run_web_search_cli(None, query="z", use_shell=False, timeout_seconds=30)
         self.assertEqual(out, "ok out")
 

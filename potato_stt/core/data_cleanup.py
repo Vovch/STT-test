@@ -12,5 +12,5 @@ def clear_data_script_path() -> Path:
     """Frozen: next to PotatoSTT.exe. Dev: repository ``scripts/`` folder."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent / CLEAR_DATA_SCRIPT_NAME
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     return repo_root / "scripts" / CLEAR_DATA_SCRIPT_NAME

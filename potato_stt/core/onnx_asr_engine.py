@@ -10,7 +10,7 @@ import numpy as np
 import onnx_asr
 import onnxruntime as ort
 
-from potato_stt.audio_utils import write_wav_from_int16_pcm
+from potato_stt.core.audio_utils import write_wav_from_int16_pcm
 
 if TYPE_CHECKING:
     from onnx_asr.asr import TimestampedResult
