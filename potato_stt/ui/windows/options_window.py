@@ -25,8 +25,10 @@ from PySide6.QtWidgets import (
 
 from potato_stt.input.ptt_keys import (
     DEFAULT_PTT_SPECS,
+    load_command_tap_specs,
     load_ptt_specs,
     load_web_search_specs,
+    save_command_tap_specs,
     save_ptt_specs,
     save_web_search_specs,
     spec_label,
@@ -39,6 +41,16 @@ from potato_stt.platform.win32_startup import (
 from potato_stt.settings_keys import (
     AUDIO_CUES_ENABLED,
     AUDIO_CUES_ENABLED_DEFAULT,
+    COMMAND_TAPS_ARGV_DOUBLE,
+    COMMAND_TAPS_ARGV_QUADRUPLE,
+    COMMAND_TAPS_ARGV_SINGLE,
+    COMMAND_TAPS_ARGV_TRIPLE,
+    COMMAND_TAPS_ENABLED,
+    COMMAND_TAPS_ENABLED_DEFAULT,
+    COMMAND_TAPS_USE_SHELL,
+    COMMAND_TAPS_USE_SHELL_DEFAULT,
+    COMMAND_TAPS_WINDOW_MS,
+    COMMAND_TAPS_WINDOW_MS_DEFAULT,
     DOUBLE_TAP_WINDOW_MS_MAX,
     DOUBLE_TAP_WINDOW_MS_MIN,
     START_MINIMIZED_SETTING,
@@ -306,6 +318,111 @@ class OptionsWindow(QWidget):
 
         self._sync_web_search_controls_enabled()
 
+        self._command_taps_enabled_cb = QCheckBox(
+            tr("Enable custom command taps (single/double/triple/quadruple)")
+        )
+        self._command_taps_enabled_cb.setChecked(
+            bool(
+                self._settings.value(
+                    COMMAND_TAPS_ENABLED,
+                    COMMAND_TAPS_ENABLED_DEFAULT,
+                    type=bool,
+                )
+            )
+        )
+        self._command_taps_enabled_cb.toggled.connect(self._on_command_taps_enabled_toggled)
+        layout.addWidget(self._command_taps_enabled_cb)
+        layout.addWidget(QLabel(tr("Command tap keys (hold final tap to speak):")))
+        self._command_tap_list = QListWidget()
+        self._command_tap_list.setMinimumHeight(80)
+        layout.addWidget(self._command_tap_list)
+        cmd_btn_row = QHBoxLayout()
+        self._add_command_tap_btn = QPushButton(tr("Add key…"))
+        self._add_command_tap_btn.clicked.connect(self._on_add_command_tap_clicked)
+        self._remove_command_tap_btn = QPushButton(tr("Remove selected"))
+        self._remove_command_tap_btn.clicked.connect(self._on_remove_command_tap_clicked)
+        cmd_btn_row.addWidget(self._add_command_tap_btn)
+        cmd_btn_row.addWidget(self._remove_command_tap_btn)
+        cmd_btn_row.addStretch(1)
+        layout.addLayout(cmd_btn_row)
+
+        cmd_delay_row = QHBoxLayout()
+        cmd_delay_row.addWidget(QLabel(tr("Command tap delay (ms):")))
+        self._command_tap_window_spin = QSpinBox()
+        self._command_tap_window_spin.setRange(
+            DOUBLE_TAP_WINDOW_MS_MIN,
+            DOUBLE_TAP_WINDOW_MS_MAX,
+        )
+        self._command_tap_window_spin.setSingleStep(25)
+        self._command_tap_window_spin.setSuffix(tr(" ms"))
+        self._command_tap_window_spin.setValue(
+            int(
+                self._settings.value(
+                    COMMAND_TAPS_WINDOW_MS,
+                    COMMAND_TAPS_WINDOW_MS_DEFAULT,
+                    type=int,
+                )
+            )
+        )
+        self._command_tap_window_spin.valueChanged.connect(self._on_command_tap_window_changed)
+        cmd_delay_row.addWidget(self._command_tap_window_spin)
+        cmd_delay_row.addStretch(1)
+        layout.addLayout(cmd_delay_row)
+
+        layout.addWidget(QLabel(tr("Single tap command:")))
+        self._command_single_edit = QLineEdit()
+        self._command_single_edit.setPlaceholderText(
+            tr('Example: python my_script.py "{transcript}"')
+        )
+        self._command_single_edit.setText(
+            str(self._settings.value(COMMAND_TAPS_ARGV_SINGLE, "", type=str) or "")
+        )
+        self._command_single_edit.editingFinished.connect(self._on_command_taps_finished)
+        layout.addWidget(self._command_single_edit)
+        layout.addWidget(QLabel(tr("Double tap command:")))
+        self._command_double_edit = QLineEdit()
+        self._command_double_edit.setText(
+            str(self._settings.value(COMMAND_TAPS_ARGV_DOUBLE, "", type=str) or "")
+        )
+        self._command_double_edit.editingFinished.connect(self._on_command_taps_finished)
+        layout.addWidget(self._command_double_edit)
+        layout.addWidget(QLabel(tr("Triple tap command:")))
+        self._command_triple_edit = QLineEdit()
+        self._command_triple_edit.setText(
+            str(self._settings.value(COMMAND_TAPS_ARGV_TRIPLE, "", type=str) or "")
+        )
+        self._command_triple_edit.editingFinished.connect(self._on_command_taps_finished)
+        layout.addWidget(self._command_triple_edit)
+        layout.addWidget(QLabel(tr("Quadruple tap command:")))
+        self._command_quadruple_edit = QLineEdit()
+        self._command_quadruple_edit.setText(
+            str(self._settings.value(COMMAND_TAPS_ARGV_QUADRUPLE, "", type=str) or "")
+        )
+        self._command_quadruple_edit.editingFinished.connect(self._on_command_taps_finished)
+        layout.addWidget(self._command_quadruple_edit)
+        self._command_taps_shell_cb = QCheckBox(
+            tr("Run command taps through shell (cmd.exe)")
+        )
+        self._command_taps_shell_cb.setChecked(
+            bool(
+                self._settings.value(
+                    COMMAND_TAPS_USE_SHELL,
+                    COMMAND_TAPS_USE_SHELL_DEFAULT,
+                    type=bool,
+                )
+            )
+        )
+        self._command_taps_shell_cb.toggled.connect(self._on_command_taps_shell_toggled)
+        layout.addWidget(self._command_taps_shell_cb)
+        self._command_tap_help = QLabel(
+            tr(
+                "Placeholders: {transcript}, {text}, {transcript_json}, {text_json}. Gesture: tap N-1 times quickly, then press-and-hold the Nth tap while speaking."
+            )
+        )
+        self._command_tap_help.setWordWrap(True)
+        self._command_tap_help.setStyleSheet("color: #888888; font-size: 11px;")
+        layout.addWidget(self._command_tap_help)
+
         self._filter_cb = QCheckBox(tr("Remove filler words and phrases from transcripts"))
         self._filter_cb.setChecked(
             bool(
@@ -366,6 +483,8 @@ class OptionsWindow(QWidget):
         layout.addStretch(1)
         self._populate_ptt_list()
         self._populate_web_search_list()
+        self._populate_command_tap_list()
+        self._sync_command_tap_controls_enabled()
 
     def closeEvent(self, event: QEvent) -> None:
         if self._really_close:
@@ -407,6 +526,13 @@ class OptionsWindow(QWidget):
             it.setData(Qt.ItemDataRole.UserRole, spec)
             self._web_search_list.addItem(it)
 
+    def _populate_command_tap_list(self) -> None:
+        self._command_tap_list.clear()
+        for spec in load_command_tap_specs(self._settings):
+            it = QListWidgetItem(spec_label(spec))
+            it.setData(Qt.ItemDataRole.UserRole, spec)
+            self._command_tap_list.addItem(it)
+
     def _sync_web_search_controls_enabled(self) -> None:
         enabled = bool(
             self._settings.value(
@@ -440,6 +566,41 @@ class OptionsWindow(QWidget):
         if fn is not None:
             fn()
         self._populate_web_search_list()
+
+    def _sync_command_tap_controls_enabled(self) -> None:
+        enabled = bool(
+            self._settings.value(
+                COMMAND_TAPS_ENABLED,
+                COMMAND_TAPS_ENABLED_DEFAULT,
+                type=bool,
+            )
+        )
+        for w in (
+            self._command_tap_list,
+            self._add_command_tap_btn,
+            self._remove_command_tap_btn,
+            self._command_tap_window_spin,
+            self._command_single_edit,
+            self._command_double_edit,
+            self._command_triple_edit,
+            self._command_quadruple_edit,
+            self._command_taps_shell_cb,
+            self._command_tap_help,
+        ):
+            w.setEnabled(enabled)
+
+    def _save_command_tap_list_from_ui(self) -> None:
+        specs: list[str] = []
+        for i in range(self._command_tap_list.count()):
+            item = self._command_tap_list.item(i)
+            d = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(d, str):
+                specs.append(d)
+        save_command_tap_specs(self._settings, specs)
+        fn = getattr(self._main, "_on_command_tap_key_setting_changed", None)
+        if fn is not None:
+            fn()
+        self._populate_command_tap_list()
 
     def _save_ptt_list_from_ui(self) -> None:
         specs: list[str] = []
@@ -483,6 +644,32 @@ class OptionsWindow(QWidget):
             return
         self._web_search_list.takeItem(row)
         self._save_web_search_list_from_ui()
+
+    @Slot()
+    def _on_add_command_tap_clicked(self) -> None:
+        dlg = PttCaptureDialog(self, title=tr("Add command-tap key"))
+        dlg.resize(420, 140)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        spec = dlg.captured_spec()
+        if not spec:
+            return
+        for i in range(self._command_tap_list.count()):
+            if self._command_tap_list.item(i).data(Qt.ItemDataRole.UserRole) == spec:
+                QMessageBox.information(self, tr("Command taps"), tr("That key is already in the list."))
+                return
+        it = QListWidgetItem(spec_label(spec))
+        it.setData(Qt.ItemDataRole.UserRole, spec)
+        self._command_tap_list.addItem(it)
+        self._save_command_tap_list_from_ui()
+
+    @Slot()
+    def _on_remove_command_tap_clicked(self) -> None:
+        row = self._command_tap_list.currentRow()
+        if row < 0:
+            return
+        self._command_tap_list.takeItem(row)
+        self._save_command_tap_list_from_ui()
 
     @Slot()
     def _on_add_ptt_clicked(self) -> None:
@@ -565,6 +752,61 @@ class OptionsWindow(QWidget):
         )
         self._web_multi_tap_combo.blockSignals(False)
         self._sync_web_search_controls_enabled()
+        self._command_taps_enabled_cb.blockSignals(True)
+        self._command_taps_enabled_cb.setChecked(
+            bool(
+                self._settings.value(
+                    COMMAND_TAPS_ENABLED,
+                    COMMAND_TAPS_ENABLED_DEFAULT,
+                    type=bool,
+                )
+            )
+        )
+        self._command_taps_enabled_cb.blockSignals(False)
+        self._command_tap_window_spin.blockSignals(True)
+        self._command_tap_window_spin.setValue(
+            int(
+                self._settings.value(
+                    COMMAND_TAPS_WINDOW_MS,
+                    COMMAND_TAPS_WINDOW_MS_DEFAULT,
+                    type=int,
+                )
+            )
+        )
+        self._command_tap_window_spin.blockSignals(False)
+        self._command_single_edit.blockSignals(True)
+        self._command_single_edit.setText(
+            str(self._settings.value(COMMAND_TAPS_ARGV_SINGLE, "", type=str) or "")
+        )
+        self._command_single_edit.blockSignals(False)
+        self._command_double_edit.blockSignals(True)
+        self._command_double_edit.setText(
+            str(self._settings.value(COMMAND_TAPS_ARGV_DOUBLE, "", type=str) or "")
+        )
+        self._command_double_edit.blockSignals(False)
+        self._command_triple_edit.blockSignals(True)
+        self._command_triple_edit.setText(
+            str(self._settings.value(COMMAND_TAPS_ARGV_TRIPLE, "", type=str) or "")
+        )
+        self._command_triple_edit.blockSignals(False)
+        self._command_quadruple_edit.blockSignals(True)
+        self._command_quadruple_edit.setText(
+            str(self._settings.value(COMMAND_TAPS_ARGV_QUADRUPLE, "", type=str) or "")
+        )
+        self._command_quadruple_edit.blockSignals(False)
+        self._command_taps_shell_cb.blockSignals(True)
+        self._command_taps_shell_cb.setChecked(
+            bool(
+                self._settings.value(
+                    COMMAND_TAPS_USE_SHELL,
+                    COMMAND_TAPS_USE_SHELL_DEFAULT,
+                    type=bool,
+                )
+            )
+        )
+        self._command_taps_shell_cb.blockSignals(False)
+        self._populate_command_tap_list()
+        self._sync_command_tap_controls_enabled()
 
     def sync_cues_from_settings(self) -> None:
         self._audio_cues_cb.blockSignals(True)
@@ -665,6 +907,35 @@ class OptionsWindow(QWidget):
         if isinstance(d, str):
             self._settings.setValue(WEB_MULTI_TAP_MODE, d)
             self._settings.sync()
+
+    @Slot(bool)
+    def _on_command_taps_enabled_toggled(self, checked: bool) -> None:
+        self._settings.setValue(COMMAND_TAPS_ENABLED, bool(checked))
+        self._settings.sync()
+        self._sync_command_tap_controls_enabled()
+        fn = getattr(self._main, "_on_command_tap_key_setting_changed", None)
+        if fn is not None:
+            fn()
+
+    @Slot(int)
+    def _on_command_tap_window_changed(self, value: int) -> None:
+        self._settings.setValue(COMMAND_TAPS_WINDOW_MS, int(value))
+        self._settings.sync()
+
+    @Slot()
+    def _on_command_taps_finished(self) -> None:
+        self._settings.setValue(COMMAND_TAPS_ARGV_SINGLE, self._command_single_edit.text().strip())
+        self._settings.setValue(COMMAND_TAPS_ARGV_DOUBLE, self._command_double_edit.text().strip())
+        self._settings.setValue(COMMAND_TAPS_ARGV_TRIPLE, self._command_triple_edit.text().strip())
+        self._settings.setValue(
+            COMMAND_TAPS_ARGV_QUADRUPLE, self._command_quadruple_edit.text().strip()
+        )
+        self._settings.sync()
+
+    @Slot(bool)
+    def _on_command_taps_shell_toggled(self, checked: bool) -> None:
+        self._settings.setValue(COMMAND_TAPS_USE_SHELL, bool(checked))
+        self._settings.sync()
 
     @Slot(bool)
     def _on_transcript_filter_enabled_toggled(self, checked: bool) -> None:

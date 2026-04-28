@@ -37,6 +37,8 @@ class HotkeyCallbacks:
     has_ptt_token: Callable[[str], bool]
     has_web_token: Callable[[str], bool]
     on_error: Callable[[str], None]
+    handle_command_tap_press: Callable[[str], bool]
+    handle_command_tap_release: Callable[[str], bool]
 
 
 class HotkeyController:
@@ -49,6 +51,7 @@ class HotkeyController:
         self._modifiers_down: set[str] = set()
         self._ptt_specs: list[str] = []
         self._web_specs: list[str] = []
+        self._command_tap_specs: list[str] = []
 
     def stop(self) -> None:
         for attr in ("_keyboard_listener", "_mouse_listener"):
@@ -61,22 +64,34 @@ class HotkeyController:
                 setattr(self, attr, None)
         self._modifiers_down.clear()
 
-    def start(self, *, ptt_specs: list[str], web_specs: list[str]) -> None:
+    def start(
+        self,
+        *,
+        ptt_specs: list[str],
+        web_specs: list[str],
+        command_tap_specs: list[str],
+    ) -> None:
         """Stop any active listeners, then register fresh ones for the given specs."""
         self.stop()
         self._ptt_specs = list(ptt_specs)
         self._web_specs = list(web_specs)
+        self._command_tap_specs = list(command_tap_specs)
         ptt = self._ptt_specs
         web = self._web_specs
+        cmd = self._command_tap_specs
         try:
-            if needs_keyboard_listener(ptt) or needs_keyboard_listener(web):
+            if (
+                needs_keyboard_listener(ptt)
+                or needs_keyboard_listener(web)
+                or needs_keyboard_listener(cmd)
+            ):
                 self._keyboard_listener = keyboard.Listener(
                     on_press=self._on_press,
                     on_release=self._on_release,
                 )
                 self._keyboard_listener.daemon = True
                 self._keyboard_listener.start()
-            if needs_mouse_listener(ptt) or needs_mouse_listener(web):
+            if needs_mouse_listener(ptt) or needs_mouse_listener(web) or needs_mouse_listener(cmd):
                 self._mouse_listener = mouse.Listener(on_click=self._on_click)
                 self._mouse_listener.daemon = True
                 self._mouse_listener.start()
@@ -87,6 +102,13 @@ class HotkeyController:
         mod = keyboard_modifier_for_event(key)
         if mod is not None:
             self._modifiers_down.add(mod)
+        command_matches = matching_keyboard_specs(
+            self._command_tap_specs, key, set(self._modifiers_down)
+        )
+        if command_matches:
+            if len(command_matches) == 1 and not is_chord_spec(command_matches[0]):
+                if self._cb.handle_command_tap_press(keyboard_token_for_event(key)):
+                    return
         ptt_matches = matching_keyboard_specs(self._ptt_specs, key, set(self._modifiers_down))
         if ptt_matches:
             if len(ptt_matches) == 1 and not is_chord_spec(ptt_matches[0]):
@@ -113,6 +135,16 @@ class HotkeyController:
 
     def _on_release(self, key) -> None:  # type: ignore[no-untyped-def]
         mod = keyboard_modifier_for_event(key)
+        command_matches = matching_keyboard_specs(
+            self._command_tap_specs, key, set(self._modifiers_down)
+        )
+        if command_matches:
+            if len(command_matches) == 1 and not is_chord_spec(command_matches[0]):
+                handled = self._cb.handle_command_tap_release(keyboard_token_for_event(key))
+                if mod is not None:
+                    self._modifiers_down.discard(mod)
+                if handled:
+                    return
         ptt_matches = matching_keyboard_specs(self._ptt_specs, key, set(self._modifiers_down))
         if ptt_matches:
             if len(ptt_matches) == 1 and not is_chord_spec(ptt_matches[0]):
@@ -157,6 +189,13 @@ class HotkeyController:
 
     def _on_click(self, x, y, button, pressed) -> None:  # type: ignore[no-untyped-def]
         tok = mouse_token_for_button(button)
+        if event_matches_any_spec_mouse(self._command_tap_specs, button):
+            if pressed:
+                if self._cb.handle_command_tap_press(tok):
+                    return
+            else:
+                if self._cb.handle_command_tap_release(tok):
+                    return
         if event_matches_any_spec_mouse(self._ptt_specs, button):
             if pressed:
                 if self._cb.handle_multi_tap_press(tok):

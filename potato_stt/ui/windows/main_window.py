@@ -51,7 +51,9 @@ from potato_stt.core.transcript_utils import (
     parse_filter_phrases,
 )
 from potato_stt.input.multi_tap import MultiTapStateMachine
+from potato_stt.input.command_tap import CommandTapStateMachine
 from potato_stt.input.ptt_keys import (
+    load_command_tap_specs,
     load_ptt_specs,
     load_web_search_specs,
     specs_summary_phrase,
@@ -67,6 +69,16 @@ from potato_stt.settings_keys import (
     AUDIO_CUES_ENABLED_DEFAULT,
     DOUBLE_TAP_WINDOW_MS_MAX,
     DOUBLE_TAP_WINDOW_MS_MIN,
+    COMMAND_TAPS_ARGV_DOUBLE,
+    COMMAND_TAPS_ARGV_QUADRUPLE,
+    COMMAND_TAPS_ARGV_SINGLE,
+    COMMAND_TAPS_ARGV_TRIPLE,
+    COMMAND_TAPS_ENABLED,
+    COMMAND_TAPS_ENABLED_DEFAULT,
+    COMMAND_TAPS_USE_SHELL,
+    COMMAND_TAPS_USE_SHELL_DEFAULT,
+    COMMAND_TAPS_WINDOW_MS,
+    COMMAND_TAPS_WINDOW_MS_DEFAULT,
     TRANSCRIPT_FILTER_ENABLED,
     TRANSCRIPT_FILTER_ENABLED_DEFAULT,
     TRANSCRIPT_FILTER_WORDS,
@@ -98,6 +110,7 @@ from potato_stt.web_search.history import (
     mark_history_entry,
     tray_message_body,
 )
+from potato_stt.commands.runner import run_transcript_command
 
 
 class MainWindow(QMainWindow):
@@ -114,6 +127,7 @@ class MainWindow(QMainWindow):
         self.settings = Settings()
         self._ptt_specs: list[str] = load_ptt_specs(self._qsettings)
         self._web_search_specs: list[str] = load_web_search_specs(self._qsettings)
+        self._command_tap_specs: list[str] = load_command_tap_specs(self._qsettings)
         self._stt_engine_ready = False
         # True only for File → Quit / tray Quit so closeEvent exits instead of hiding to tray.
         self._requesting_full_quit = False
@@ -251,6 +265,7 @@ class MainWindow(QMainWindow):
             onnx_engine_provider=lambda: self._onnx_engine,
             ptt_specs_provider=lambda: list(self._ptt_specs),
             filter_phrases_provider=self._effective_filter_phrases,
+            command_handler=self._run_tap_command_capture,
         )
         self._multi_tap = MultiTapStateMachine(
             is_enabled=self._web_double_tap_enabled,
@@ -262,6 +277,13 @@ class MainWindow(QMainWindow):
             remove_web=self._remove_web_search_token,
             is_web_active=self._is_token_web_active,
         )
+        self._command_tap = CommandTapStateMachine(
+            is_enabled=self._command_taps_enabled,
+            delay_seconds=self._command_tap_delay_seconds,
+            begin_capture=self._begin_command_tap_capture,
+            end_capture=self._end_command_tap_capture,
+        )
+        self._command_tap_capture_by_token: dict[str, int] = {}
         self._hotkey_ctrl = HotkeyController(
             HotkeyCallbacks(
                 add_ptt=self._add_ptt_token,
@@ -273,6 +295,8 @@ class MainWindow(QMainWindow):
                 has_ptt_token=lambda tok: tok in self._ptt_hold_tokens,
                 has_web_token=lambda tok: tok in self._web_search_hold_tokens,
                 on_error=lambda msg: self.signals.errorOccurred.emit(msg),
+                handle_command_tap_press=self._handle_command_tap_press,
+                handle_command_tap_release=self._handle_command_tap_release,
             )
         )
 
@@ -437,6 +461,11 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_web_search_key_setting_changed(self) -> None:
         self._web_search_specs = load_web_search_specs(self._qsettings)
+        self.restart_ptt_listeners()
+
+    @Slot()
+    def _on_command_tap_key_setting_changed(self) -> None:
+        self._command_tap_specs = load_command_tap_specs(self._qsettings)
         self.restart_ptt_listeners()
 
     @Slot()
@@ -943,6 +972,27 @@ class MainWindow(QMainWindow):
 
     def _cancel_double_tap_timers(self) -> None:
         self._multi_tap.cancel_all()
+        self._command_tap.cancel_all()
+
+    def _command_taps_enabled(self) -> bool:
+        return bool(
+            self._qsettings.value(
+                COMMAND_TAPS_ENABLED,
+                COMMAND_TAPS_ENABLED_DEFAULT,
+                type=bool,
+            )
+        )
+
+    def _command_tap_delay_seconds(self) -> float:
+        raw = int(
+            self._qsettings.value(
+                COMMAND_TAPS_WINDOW_MS,
+                COMMAND_TAPS_WINDOW_MS_DEFAULT,
+                type=int,
+            )
+        )
+        ms = max(DOUBLE_TAP_WINDOW_MS_MIN, min(DOUBLE_TAP_WINDOW_MS_MAX, raw))
+        return ms / 1000.0
 
     def _multi_tap_mode(self) -> str:
         return OptionsWindow._stored_multi_tap_mode(self._qsettings)
@@ -959,6 +1009,58 @@ class MainWindow(QMainWindow):
 
     def _handle_double_tap_release(self, token: str) -> bool:
         return self._multi_tap.handle_release(token)
+
+    def _handle_command_tap_press(self, token: str) -> bool:
+        return self._command_tap.handle_press(token)
+
+    def _handle_command_tap_release(self, token: str) -> bool:
+        return self._command_tap.handle_release(token)
+
+    def _begin_command_tap_capture(self, token: str, tap_count: int) -> None:
+        if self._recording or self._mic_stt_busy:
+            return
+        self._command_tap_capture_by_token[token] = tap_count
+        self.signals.statusChanged.emit(f"Recording command ({tap_count} tap) …")
+        self._start_recording(mode=f"command:{tap_count}")
+
+    def _end_command_tap_capture(self, token: str) -> None:
+        tap_count = self._command_tap_capture_by_token.pop(token, None)
+        if tap_count is None:
+            return
+        if self._recording and self._capture_mode == f"command:{tap_count}":
+            self._stop_recording_and_transcribe(mode=f"command:{tap_count}")
+
+    def _run_tap_command_capture(self, transcript: str, tap_count: int) -> None:
+        key_map = {
+            1: COMMAND_TAPS_ARGV_SINGLE,
+            2: COMMAND_TAPS_ARGV_DOUBLE,
+            3: COMMAND_TAPS_ARGV_TRIPLE,
+            4: COMMAND_TAPS_ARGV_QUADRUPLE,
+        }
+        argv_key = key_map.get(tap_count, COMMAND_TAPS_ARGV_SINGLE)
+        line = self._qsettings.value(argv_key, "", type=str)
+        if not isinstance(line, str) or not line.strip():
+            self.signals.statusChanged.emit(f"No command configured for {tap_count} tap(s).")
+            return
+        use_shell = bool(
+            self._qsettings.value(
+                COMMAND_TAPS_USE_SHELL,
+                COMMAND_TAPS_USE_SHELL_DEFAULT,
+                type=bool,
+            )
+        )
+        timeout_s = max(20, int(self.settings.stt_timeout_seconds) * 3)
+        try:
+            out = run_transcript_command(
+                line,
+                transcript=transcript,
+                use_shell=use_shell,
+                timeout_seconds=timeout_s,
+            )
+            if out:
+                self.signals.transcriptAppend.emit(out)
+        except Exception as e:
+            self.signals.errorOccurred.emit(f"{type(e).__name__}: {e}")
 
     @Slot()
     def _on_web_search_button_pressed(self) -> None:
@@ -985,9 +1087,15 @@ class MainWindow(QMainWindow):
         self._web_search_hold_tokens.clear()
         self._ptt_specs = load_ptt_specs(self._qsettings)
         self._web_search_specs = load_web_search_specs(self._qsettings)
+        self._command_tap_specs = load_command_tap_specs(self._qsettings)
         ptt_specs = self._ptt_specs
         web_specs = self._web_search_specs if self._web_search_enabled() else []
-        self._hotkey_ctrl.start(ptt_specs=ptt_specs, web_specs=web_specs)
+        command_specs = self._command_tap_specs if self._command_taps_enabled() else []
+        self._hotkey_ctrl.start(
+            ptt_specs=ptt_specs,
+            web_specs=web_specs,
+            command_tap_specs=command_specs,
+        )
 
     def _start_recording(self, *, mode: str) -> None:
         self._recording_ctrl.start(mode=mode)

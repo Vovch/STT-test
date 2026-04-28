@@ -11,6 +11,7 @@ from pynput import keyboard, mouse
 PTT_KEY_SETTING = "push_to_talk_key"
 PTT_KEYS_SETTING = "push_to_talk_keys"
 WEB_SEARCH_KEYS_SETTING = "web_search_keys"
+COMMAND_TAP_KEYS_SETTING = "command_tap_keys"
 
 PTT_KEY_DEFAULT = "right_ctrl"
 DEFAULT_PTT_SPECS: list[str] = [PTT_KEY_DEFAULT]
@@ -204,6 +205,23 @@ def load_web_search_specs(qsettings: QSettings) -> list[str]:
 def save_web_search_specs(qsettings: QSettings, specs: list[str]) -> None:
     norm = normalize_web_search_spec_list(specs)
     qsettings.setValue(WEB_SEARCH_KEYS_SETTING, json.dumps(norm))
+
+
+def load_command_tap_specs(qsettings: QSettings) -> list[str]:
+    raw_json = qsettings.value(COMMAND_TAP_KEYS_SETTING, None)
+    if isinstance(raw_json, str) and raw_json.strip():
+        try:
+            data = json.loads(raw_json)
+            if isinstance(data, list):
+                return normalize_web_search_spec_list(data)
+        except json.JSONDecodeError:
+            pass
+    return []
+
+
+def save_command_tap_specs(qsettings: QSettings, specs: list[str]) -> None:
+    norm = normalize_web_search_spec_list(specs)
+    qsettings.setValue(COMMAND_TAP_KEYS_SETTING, json.dumps(norm))
 
 
 def mouse_button_to_spec(btn: mouse.Button) -> Optional[str]:

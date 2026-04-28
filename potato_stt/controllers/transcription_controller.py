@@ -47,6 +47,7 @@ class TranscriptionController:
         onnx_engine_provider: Callable[[], Optional[OnnxAsrEngine]],
         ptt_specs_provider: Callable[[], list[str]],
         filter_phrases_provider: Callable[[], Optional[list[str]]],
+        command_handler: Callable[[str, int], None],
     ) -> None:
         self._qsettings = qsettings
         self._settings = settings
@@ -57,6 +58,7 @@ class TranscriptionController:
         self._onnx_engine_provider = onnx_engine_provider
         self._ptt_specs_provider = ptt_specs_provider
         self._filter_phrases_provider = filter_phrases_provider
+        self._command_handler = command_handler
 
     def stop_and_transcribe(self, *, mode: str) -> None:
         if not self._recording.is_recording:
@@ -139,7 +141,18 @@ class TranscriptionController:
                 cleaned = postprocess_transcript_text(text, filter_phrases=filter_phrases)
                 if cleaned:
                     signals.transcriptAppend.emit(cleaned)
-                    if capture_mode == "web":
+                    if capture_mode.startswith("command:"):
+                        signals.micSttBusy.emit(False)
+                        try:
+                            tap_count = int(capture_mode.split(":", 1)[1])
+                        except Exception:
+                            tap_count = 1
+                        self._command_handler(cleaned, tap_count)
+                        signals.statusChanged.emit(
+                            f"Command from {tap_count}-tap capture finished. Ready. Hold "
+                            f"{specs_summary_phrase(self._ptt_specs_provider())} to talk."
+                        )
+                    elif capture_mode == "web":
                         signals.micSttBusy.emit(False)
                         signals.statusChanged.emit("Searching web…")
                         with self._web_search.semaphore:

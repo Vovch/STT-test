@@ -27,6 +27,13 @@ WEB_SEARCH_USE_SHELL = "web_search/use_shell"
 WEB_MULTI_TAP_MODE = "web_search/multi_tap_mode"
 WEB_MULTI_TAP_SECOND_PRESS_WEB = "second_press_web"
 WEB_MULTI_TAP_DOUBLE_PTT_TRIPLE_WEB = "double_ptt_triple_web"
+COMMAND_TAPS_ENABLED = "command_taps/enabled"
+COMMAND_TAPS_WINDOW_MS = "command_taps/window_ms"
+COMMAND_TAPS_ARGV_SINGLE = "command_taps/argv_single"
+COMMAND_TAPS_ARGV_DOUBLE = "command_taps/argv_double"
+COMMAND_TAPS_ARGV_TRIPLE = "command_taps/argv_triple"
+COMMAND_TAPS_ARGV_QUADRUPLE = "command_taps/argv_quadruple"
+COMMAND_TAPS_USE_SHELL = "command_taps/use_shell"
 
 # First-run defaults (used when a key is absent; existing QSettings win once saved).
 AUDIO_CUES_ENABLED_DEFAULT = True
@@ -39,6 +46,9 @@ WEB_SEARCH_ENABLED_DEFAULT = True
 WEB_DOUBLE_TAP_ENABLED_DEFAULT = False
 WEB_DOUBLE_TAP_WINDOW_MS_DEFAULT = 300
 WEB_MULTI_TAP_MODE_DEFAULT = WEB_MULTI_TAP_SECOND_PRESS_WEB
+COMMAND_TAPS_ENABLED_DEFAULT = False
+COMMAND_TAPS_WINDOW_MS_DEFAULT = 450
+COMMAND_TAPS_USE_SHELL_DEFAULT = False
 
 # Max concurrent web-search subprocesses (STT still one-at-a-time per mic).
 WEB_OPENCODE_MAX_CONCURRENT = 2
